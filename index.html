@@ -170,7 +170,7 @@
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
 
-  // Offscreen buffer for complex background rendering and reflections
+  // Offscreen buffer for background rendering and reflections
   const bgBuffer = document.createElement('canvas');
   const bgCtx = bgBuffer.getContext('2d');
 
@@ -195,11 +195,15 @@
   const PELLETS = 10;
   const PELLET_SPEED = 16.0;
   const RECOIL_FRAMES = 8;
-  const DAYLEN = 60 * 90; // Extended day length for slower atmospheric transitions
+  const DAYLEN = 60 * 90;
   const HIT_R2 = 144;
   const SPRITE_SCALE = 3; 
-  const FOREGROUND_Y_OFFSET = 170; 
-  const POWERUP_SPAWN_INTERVAL = 60 * 40; // Approx every 40 seconds
+  const FOREGROUND_Y_OFFSET = 170;
+  // CORRECTION: Define the waterline precisely. This is the axis for reflections and terrain placement.
+  // We calculate this based on H, which might change on resize, so it's defined in fit() and used globally.
+  let WATER_Y = H - (FOREGROUND_Y_OFFSET - 5); 
+
+  const POWERUP_SPAWN_INTERVAL = 60 * 40;
   
   // --- Audio setup ---
   // (Audio setup remains unchanged)
@@ -353,7 +357,6 @@
   let clouds = [], raindrops = [];
   let powerups = [];
   let floatingTexts = [];
-  // ENHANCEMENT: Define terrain data structures for detailed elements
   let terrain = { distantPines: [], nearPines: [], rocks: [] };
   let weather = { raining: false, until: 0, windX: 0, windTarget: 0, windChangeTimer: 0 };
   let hunter = { x: W/2 - 12, y: H - FOREGROUND_Y_OFFSET, aiming: 0, recoil: 0, muzzleFlash: 0 };
@@ -376,8 +379,7 @@
   const clamp = (v,a,b) => v < a ? a : v > b ? b : v;
   const easeOut = (t) => 1 - Math.pow(1 - t, 2);
 
-  // Updated drawing primitives to accept an optional context (for buffer drawing)
-  // FIX: Explicitly define the context parameter (targetCtx) to resolve ambiguity issues and ensure correct defaulting.
+  // Drawing primitives accept an optional context (targetCtx)
   function p(x, y, color, targetCtx = ctx) { targetCtx.fillStyle = color; targetCtx.fillRect(Math.round(x), Math.round(y), 1, 1); }
   function r(x,y,w,h,color, targetCtx = ctx) { targetCtx.fillStyle = color; targetCtx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h)); }
   function l(x0,y0,x1,y1,color, targetCtx = ctx) { x0=Math.round(x0); y0=Math.round(y0); x1=Math.round(x1); y1=Math.round(y1); let dx = Math.abs(x1-x0), dy = -Math.abs(y1-y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1; let err = dx + dy; while (true) { p(x0, y0, color, targetCtx); if (x0===x1 && y0===y1) break; let e2 = 2*err; if (e2 >= dy) { err += dy; x0 += sx; } if (e2 <= dx) { err += dx; y0 += sy; } } }
@@ -429,23 +431,18 @@
       return `rgb(${c[0]|0},${c[1]|0},${c[2]|0})`;
   }
 
-  // ENHANCEMENT: Refined Atmospheric Palettes to match the reference image's cool/warm contrast
+  // Atmospheric Palettes (Cool/warm contrast)
   const skyStops = [
-      // Deep Night (Cool Indigo)
       {t: 0.00, c: [10, 15, 35]},
       {t: 0.20, c: [20, 30, 50]},
-      // Sunrise Start (Deep blue/gray to intense warm glow)
       {t: 0.25, c: [40, 60, 80]},
       {t: 0.28, c: [255, 160, 80]}, // Intense warm horizon
       {t: 0.30, c: [255, 200, 140]},
-      // Morning (Cool, desaturated blues/grays)
       {t: 0.35, c: [100, 130, 160]},
       {t: 0.50, c: [170, 190, 210]}, // Midday (Grayish blue)
-      // Sunset
       {t: 0.70, c: [100, 130, 160]},
       {t: 0.75, c: [255, 180, 120]},
       {t: 0.80, c: [220, 140, 90]},
-      // Twilight
       {t: 0.85, c: [40, 50, 70]},
       {t: 1.00, c: [10, 15, 35]}
   ];
@@ -479,7 +476,7 @@
       {t: 1.00, c: [45, 50, 65]}
   ];
 
-  // ENHANCEMENT: Pine Tree Palettes (Cool, dark greens matching the reference)
+  // Pine Tree Palettes (Cool, dark greens)
   const distantPineStops = [
       {t: 0.00, c: [15, 25, 20]},
       {t: 0.28, c: [30, 50, 40]},
@@ -529,36 +526,38 @@
     }
 
     // Generate the underlying landmass shapes
-    const distantMap = generateHeightMap(60, 0.5, 0.02, 0.05);
-    const nearMap = generateHeightMap(40, 0.8, 0.05, 0.1);
-    const rockMap = generateHeightMap(10, 1.5, 0.1, 0.3);
+    // Adjusted amplitudes and frequencies for better visual layering
+    const distantMap = generateHeightMap(50, 0.5, 0.02, 0.05);
+    const nearMap = generateHeightMap(30, 0.8, 0.05, 0.1);
+    const rockMap = generateHeightMap(8, 1.5, 0.1, 0.3);
 
     // Populate layers with individual trees based on the height maps
-    function populatePines(layer, heightMap, density, heightRange, widthRange) {
+    function populatePines(layer, heightMap, density, heightRange, widthRange, yOffset) {
         for (let i = 0; i < W; i += RI(widthRange[0], widthRange[1])) {
             if (Math.random() < density) {
                 const h = RI(heightRange[0], heightRange[1]);
-                // Position the tree so its base sits roughly at the heightmap level
-                const baseYOffset = heightMap[Math.min(W-1, i)];
+                // Position the tree so its base sits roughly at the heightmap level + offset
+                const baseYOffset = heightMap[Math.min(W-1, Math.floor(i))] + yOffset;
                 layer.push({ x: i, h: h, baseYOffset: baseYOffset, seed: Math.random() });
             }
         }
     }
 
-    // Distant pines: Dense, smaller, less varied
-    populatePines(terrain.distantPines, distantMap, 0.9, [15, 30], [3, 5]);
-    // Near pines: Less dense, larger, more varied (like the reference)
-    populatePines(terrain.nearPines, nearMap, 0.7, [25, 50], [5, 8]);
+    // Distant pines: Dense, smaller, further back (yOffset)
+    populatePines(terrain.distantPines, distantMap, 0.9, [15, 35], [4, 6], 30);
+    // Near pines: Less dense, larger, closer
+    populatePines(terrain.nearPines, nearMap, 0.7, [25, 55], [6, 9], 5);
 
-    // Populate rocks (using the heightmap approach for texture)
+    // Populate rocks
     for (let i = 0; i < W; i++) {
-        terrain.rocks.push({ height: rockMap[i], density: Math.random() });
+        // Rocks are positioned right at the waterline (offset 0)
+        terrain.rocks.push({ x: i, height: rockMap[i], density: Math.random(), baseYOffset: 0 });
     }
   }
 
   function generateReeds() { reeds = []; for (let i=0;i<100;i++) { reeds.push({ x: RI(0,W-1), h: RI(8,22), seed: R(1000), layer: Math.random() < 0.3 ? 2 : (Math.random() < 0.6 ? 1 : 0), type: Math.random() < 0.2 ? 'cattail' : 'simple' }); } reeds.sort((a, b) => a.layer - b.layer); }
 
-  // (spawnCloud and drawClouds remain the same, using advanced rim lighting)
+  // (spawnCloud and drawClouds remain the same)
   function spawnCloud() {
     const dirRight = Math.random() < 0.5;
     const cloud = {
@@ -872,13 +871,11 @@
       const endX = originX + Math.cos(ang) * (22*s + recoilOffset);
       const endY = originY + Math.sin(ang) * (22*s + recoilOffset);
       const fx = endX, fy = endY;
-      // FIX: Ensure muzzle flash drawing explicitly uses the main context (ctx)
       r(fx - 1*s, fy - 1*s, 3*s, 3*s, '#fff3a0', ctx); p(fx + 2*s, fy, '#ffd46b', ctx); p(fx - 2*s, fy, '#ffd46b', ctx); p(fx, fy + 2*s, '#ffd46b', ctx); p(fx, fy - 2*s, '#ffd46b', ctx);
     }
   }
   
-  // FIX: Renamed the context parameter (dCtx) in sprite definitions to avoid shadowing the global 'ctx'
-  // and ensure the correct context is passed to the drawing primitives (r, p).
+  // (dogSprites, spawnDog, drawDogs remain the same, ensuring context passing)
   const dogSprites = {
     carrying: [
       (dCtx, x, y) => { const light = '#795548', mid = '#4e342e', black = '#111'; r(x+1, y+8, 10, 5, mid, dCtx); r(x+2, y+9, 8, 3, light, dCtx); r(x+9, y+7, 4, 4, mid, dCtx); r(x+10, y+8, 2, 2, light, dCtx); r(x+12, y+8, 2, 1, black, dCtx); p(x+10, y+8, black, dCtx); r(x+8, y+6, 2, 2, mid, dCtx); r(x, y+10, 2, 2, mid, dCtx); r(x+2, y+13, 2, 4, mid, dCtx); r(x+3, y+13, 1, 3, light, dCtx); r(x+8, y+13, 2, 4, mid, dCtx); r(x+9, y+13, 1, 3, light, dCtx); },
@@ -888,7 +885,7 @@
     ]
   };
 
-  function spawnDog(duckX, duckType) { playDogBark(); const dirRight = duckX > W / 2; const vx = dirRight ? 1.2 : -1.2; dogs.push({ x: duckX, y: H - (FOREGROUND_Y_OFFSET - 5), frame: 0, state: 'carrying', vx, duckType }); }
+  function spawnDog(duckX, duckType) { playDogBark(); const dirRight = duckX > W / 2; const vx = dirRight ? 1.2 : -1.2; dogs.push({ x: duckX, y: WATER_Y, frame: 0, state: 'carrying', vx, duckType }); }
   
   function drawDogs() {
     if (!dogs || !Array.isArray(dogs)) return;
@@ -912,9 +909,8 @@
     }
   }
 
-  // (drawReeds remains unchanged)
+  // (drawReeds remains unchanged, uses WATER_Y)
   function drawReeds() {
-    const waterY = H - (FOREGROUND_Y_OFFSET - 5);
     const t = (gameClock % DAYLEN) / DAYLEN;
 
     // Define hue-shifted colors based on lighting and depth
@@ -937,7 +933,7 @@
       const sway = timeSway + windSway;
 
       const x = rd.x;
-      const y = waterY;
+      const y = WATER_Y;
 
       let green1, green2;
       switch(rd.layer) {
@@ -989,42 +985,57 @@
   function ensureStars(){ if (!starField) starField = Array.from({length: 80}, () => ({x: RI(0,W), y: RI(0, H * 0.5), a: Math.random()*0.8})); }
   function drawStars(sunElev, c=ctx){ if (sunElev > 0.1) { starField = null; return; } ensureStars(); c.globalAlpha = clamp(1 - (sunElev / 0.1), 0, 1); for (const s of starField) p(s.x, s.y, `rgba(255,255,255,${s.a})`, c); c.globalAlpha = 1; }
 
-  // ENHANCEMENT: Helper function to draw detailed pine tree silhouettes
+  // ENHANCEMENT: Refined Pine Tree drawing with detailed clustering for texture
   function drawPineTree(x, y, h, baseColor, highlightColor, lightX, c=ctx) {
+    // Increased foliage width slightly for a fuller look
+    const foliageW = Math.max(4, Math.floor(h / 4));
+
+    // Draw trunk (Only the bottom part visible below foliage)
     const trunkW = Math.max(1, Math.floor(h / 15));
-    const foliageW = Math.max(3, Math.floor(h / 5));
+    r(x - trunkW/2, y - h*0.2, trunkW, h*0.2, baseColor, c); 
 
-    // Draw trunk (simple rectangle)
-    r(x - trunkW/2, y - h, trunkW, h, baseColor, c);
-
-    // Draw foliage using clustering (triangular shapes created by horizontal strips)
-    for (let i = 0; i < h * 0.8; i += 2) {
+    // Draw foliage using clustering
+    for (let i = 0; i < h; i += 1) { // Iterate pixel by pixel for detail
         const currentY = y - h + i;
-        // Width decreases towards the top
-        const w = foliageW * (1 - (i / (h * 0.8)));
+        // Width decreases towards the top, creating the triangular shape
+        const progress = (i / h);
+        let w = foliageW * (1 - progress);
+
+        // Add variations to the width to simulate branches
+        if (progress > 0.2 && progress < 0.9) {
+            w += Math.sin(i * 0.5) * 2;
+        }
+        w = Math.max(1, w);
+
         const startX = x - w/2;
 
-        // Draw the horizontal strip
-        r(startX, currentY, w, 2, baseColor, c);
+        // Draw the horizontal strip using randomized clustering
+        for (let j = 0; j < w; j++) {
+            // Increase randomness near the edges for a softer look
+            const edgeFactor = Math.abs(j - w/2) / (w/2);
+            if (Math.random() > edgeFactor * 0.5) {
+                p(startX + j, currentY, baseColor, c);
+            }
+        }
 
         // Apply highlights based on light direction (X-axis)
-        if (highlightColor) {
-            c.globalAlpha = 0.6;
-            // If light is from the right (lightX > 0), highlight the right side
-            if (lightX > 0.3 && w > 2) {
-                r(x + w/4, currentY, w/4, 1, highlightColor, c);
+        if (highlightColor && w > 3) {
+            c.globalAlpha = 0.5;
+            // If light is from the right (lightX > 0)
+            if (lightX > 0.3) {
+                if (Math.random() > 0.3) p(x + w/4 + R(2), currentY, highlightColor, c);
             } 
-            // If light is from the left (lightX < 0), highlight the left side
-            else if (lightX < -0.3 && w > 2) {
-                r(startX, currentY, w/4, 1, highlightColor, c);
+            // If light is from the left (lightX < 0)
+            else if (lightX < -0.3) {
+                if (Math.random() > 0.3) p(startX + R(w/4), currentY, highlightColor, c);
             }
             c.globalAlpha = 1.0;
         }
     }
   }
 
-  // ENHANCEMENT: Helper function to draw terrain layers with atmospheric perspective
-  function drawTerrainLayer(layerData, stops, hazeFactor, horizonY, isDetailed, c=ctx) {
+  // Helper function to draw terrain layers with atmospheric perspective
+  function drawTerrainLayer(layerData, stops, hazeFactor, isDetailed, c=ctx) {
     const t = (gameClock % DAYLEN) / DAYLEN;
     const hazeColor = getGradientColor(t, skyStops); 
     
@@ -1048,48 +1059,48 @@
         highlightColorStr = colorToString(highlightColor);
     }
 
-    // Check if layerData is for pines (Array of objects) or rocks (Object with height/density)
-    if (layerData && layerData.length > 0 && layerData[0].hasOwnProperty('h')) {
-        // Drawing Pines
+    // Drawing Pines or Rocks
+    if (layerData && layerData.length > 0) {
         layerData.forEach(item => {
-            const y = horizonY - item.baseYOffset;
-            drawPineTree(item.x, y, item.h, baseColorStr, highlightColorStr, lightX, c);
-        });
-    } else {
-        // Drawing Rocks (Using the heightmap technique but with rock colors and texture)
-        for (let i = 0; i < W; i++) {
-            const data = terrain.rocks[i];
-            if (!data) continue;
-            const h = data.height;
-            const y = horizonY - h;
+            // CORRECTION: Calculate Y position based on the unified WATER_Y and the item's offset
+            const y = WATER_Y - item.baseYOffset;
 
-            // Draw the main shape (ensuring it covers the area below)
-            r(i, y, 1, h + 5, baseColorStr, c);
+            if (item.hasOwnProperty('h')) {
+                // It's a pine tree
+                drawPineTree(item.x, y, item.h, baseColorStr, highlightColorStr, lightX, c);
+            } else if (item.hasOwnProperty('height')) {
+                // It's a rock (Drawn strip by strip for texture)
+                const h = item.height;
+                const rockY = y - h;
 
-            // Add texture/clustering (mimicking rough rock surface)
-            if (data.density > 0.5 && i > 0 && i < W-1) {
-                if (Math.random() > 0.6) p(i-1, y + R(h), baseColorStr, c);
-                if (Math.random() > 0.6) p(i+1, y + R(h), baseColorStr, c);
+                // Draw the main shape
+                r(item.x, rockY, 1, h + 1, baseColorStr, c);
+
+                // Add texture/clustering
+                if (item.density > 0.5 && Math.random() > 0.6) {
+                    p(item.x - 1, rockY + R(h), baseColorStr, c);
+                }
+                if (item.density > 0.5 && Math.random() > 0.6) {
+                    p(item.x + 1, rockY + R(h), baseColorStr, c);
+                }
             }
-        }
+        });
     }
   }
 
   // ENHANCEMENT: Comprehensive background rendering with detailed terrain and reflections
   function drawBackground() {
     const gameTime = (gameClock % DAYLEN) / DAYLEN;
-    // Define the horizon line (where the distant terrain meets the water)
-    const horizonY = H * 0.45;
-    const waterY = H - (FOREGROUND_Y_OFFSET - 5);
-    const waterHeight = FOREGROUND_Y_OFFSET - 5;
+    const waterHeight = H - WATER_Y;
 
     // --- 1. Render Sky, Terrain, and Clouds to the Offscreen Buffer (bgBuffer) ---
     bgCtx.imageSmoothingEnabled = false;
 
     // Sky Gradient
     const skyColor = getGradientColor(gameTime, skyStops);
-    // Gradient goes higher up than the horizon line to cover the sky area
-    const g = bgCtx.createLinearGradient(0, 0, 0, H * 0.6); 
+    // Define the sky area height (above the water)
+    const skyHeight = WATER_Y; 
+    const g = bgCtx.createLinearGradient(0, 0, 0, skyHeight); 
     g.addColorStop(0, colorToString(skyColor));
     
     // Atmospheric scattering/haze effect near the horizon
@@ -1101,15 +1112,15 @@
     ]);
     g.addColorStop(1, colorToString(horizonHaze));
     bgCtx.fillStyle = g;
-    // Fill the entire buffer
-    bgCtx.fillRect(0, 0, W, H);
+    // Fill the buffer (only need to fill the sky part, terrain covers the rest)
+    bgCtx.fillRect(0, 0, W, skyHeight);
     
     // Sun/Moon/Stars (Drawn on bgBuffer)
     const theta = 2 * Math.PI * (gameTime - 0.25);
     const sunElev = Math.sin(theta);
     const sunX = W/2 - (W/2) * Math.cos(theta);
-    // Position relative to the top of the sky area
-    const sunY = (H * 0.4) - sunElev * (H * 0.4);
+    // Position relative to the sky height
+    const sunY = skyHeight - sunElev * skyHeight;
 
     const bloomIntensity = clamp(1.0 - Math.abs(sunElev), 0.3, 0.9);
 
@@ -1128,7 +1139,7 @@
     const moonTheta = theta + Math.PI;
     const moonElev = Math.sin(moonTheta);
     const moonX = W/2 - (W/2) * Math.cos(moonTheta);
-    const moonY = (H * 0.4) - moonElev * (H * 0.4);
+    const moonY = skyHeight - moonElev * skyHeight;
     
     if (moonElev > -0.1) {
         // Bloom/Glow effect
@@ -1144,58 +1155,55 @@
     bgCtx.globalAlpha = 1;
     drawStars(sunElev, bgCtx);
     
-    // Terrain Layers (Drawn on bgBuffer, back to front)
-    // Haze factors determine blending (0=no haze, 1=full sky color)
-
-    // Layer 1: Distant Pines (Further back, more haze)
-    drawTerrainLayer(terrain.distantPines, distantPineStops, 0.5, horizonY - 20, false, bgCtx);
-    
-    // Layer 2: Near Pines (Closer, less haze, detailed lighting)
-    drawTerrainLayer(terrain.nearPines, nearPineBaseStops, 0.2, horizonY, true, bgCtx);
-
-    // Layer 3: Rocks (Closest, near the water line)
-    // We pass terrain.rocks directly as it uses a different internal structure
-    drawTerrainLayer(terrain.rocks, rockStops, 0.05, waterY, false, bgCtx);
-
-
-    // Clouds (Drawn on bgBuffer)
+    // Clouds (Drawn before terrain so they can go behind distant elements)
     drawClouds(bgCtx);
+
+    // Terrain Layers (Drawn on bgBuffer, back to front)
+    // Haze factors adjusted for better depth perception
+
+    // Layer 1: Distant Pines (More haze)
+    drawTerrainLayer(terrain.distantPines, distantPineStops, 0.5, false, bgCtx);
+    
+    // Layer 2: Near Pines (Less haze, detailed lighting)
+    drawTerrainLayer(terrain.nearPines, nearPineBaseStops, 0.15, true, bgCtx);
+
+    // Layer 3: Rocks (Closest, minimal haze)
+    drawTerrainLayer(terrain.rocks, rockStops, 0.05, false, bgCtx);
+
 
     // --- 2. Draw the main canvas background (Water Body) ---
     const waterColor = getGradientColor(gameTime, waterStops);
-    r(0, waterY, W, waterHeight, colorToString(waterColor), ctx);
+    r(0, WATER_Y, W, waterHeight, colorToString(waterColor), ctx);
 
     // --- 3. Draw Reflections onto the main canvas using the bgBuffer ---
     ctx.save();
     // Clip to the water area
     ctx.beginPath();
-    ctx.rect(0, waterY, W, waterHeight);
+    ctx.rect(0, WATER_Y, W, waterHeight);
     ctx.clip();
 
     // Dynamic Ripple Distortion
-    const reflectionSourceY = waterY;
-    // Calculate the height of the reflection visible in the water area
-    const reflectionHeight = Math.min(waterHeight, reflectionSourceY);
+    // The reflection source Y is the waterline (WATER_Y)
+    const reflectionHeight = Math.min(waterHeight, WATER_Y);
 
     for (let y = 0; y < reflectionHeight; y++) {
         // Calculate distortion
-        // Ripples are stronger (higher amplitude) further away from the horizon (further down the screen)
-        const rippleAmplitude = clamp(y / 15.0, 0.8, 6.0); 
-        const rippleFrequency = 0.1;
-        const rippleSpeed = 0.05;
-        // Combine two sine waves for complex movement
+        // ENHANCEMENT: Tuned ripple parameters for more realistic movement
+        const rippleAmplitude = clamp(y / 20.0, 0.5, 4.0); 
+        const rippleFrequency = 0.08;
+        const rippleSpeed = 0.06;
+        // Combine two sine waves
         const distortion = Math.sin(y * rippleFrequency + gameClock * rippleSpeed) * rippleAmplitude +
-                           Math.sin(y * rippleFrequency * 0.6 - gameClock * rippleSpeed * 1.2) * (rippleAmplitude * 0.5);
+                           Math.sin(y * rippleFrequency * 0.7 - gameClock * rippleSpeed * 1.1) * (rippleAmplitude * 0.6);
         
         // Source coordinates on the buffer (reading upwards from the waterline)
-        const sourceY = reflectionSourceY - y - 1;
+        const sourceY = WATER_Y - y - 1;
         // Destination coordinates on the canvas (drawing downwards from the waterline)
-        const destY = waterY + y;
+        const destY = WATER_Y + y;
 
         // Draw the distorted strip
-        ctx.globalAlpha = 0.85; // Reflections are slightly transparent
+        ctx.globalAlpha = 0.85;
         // DrawImage parameters: (image, sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight)
-        // We add +1 to W to ensure the strip covers the screen even when distorted
         ctx.drawImage(bgBuffer, 
             0, sourceY, W, 1,           // Source rectangle (1px strip)
             distortion, destY, W + 1, 1 // Destination rectangle (with horizontal offset)
@@ -1206,14 +1214,14 @@
 
     // --- 4. Draw the background scenery (Sky/Terrain/Clouds) from the buffer onto the main canvas ---
     // Draw everything above the water line from the buffer
-    ctx.drawImage(bgBuffer, 0, 0, W, waterY, 0, 0, W, waterY);
+    ctx.drawImage(bgBuffer, 0, 0, W, WATER_Y, 0, 0, W, WATER_Y);
 
 
     // --- 5. Water Highlights (Drawn on top of everything) ---
     ctx.globalAlpha = 1;
     const waterHighlight = `rgba(255, 255, 230, 0.15)`;
     for (let i=0; i < waterHeight; i+=3) {
-        const yy = waterY + i;
+        const yy = WATER_Y + i;
         for (let x=0; x<W; x+=RI(15,25)) {
             r(x + Math.sin((gameClock*0.06 + i)*0.5)*4.0 + weather.windX * 1.5, yy, RI(4,8), 1, waterHighlight, ctx);
         }
@@ -1568,12 +1576,11 @@
       if (cloudSpawnTimer <= 0 && clouds.length < 15) { spawnCloud(); cloudSpawnTimer = RI(60, 150); }
 
       // Update rain
-      const waterY = H - (FOREGROUND_Y_OFFSET - 5);
       if (weather.raining) {
           spawnRainTick();
           for (let i=raindrops.length-1; i>=0; i--) {
               const d = raindrops[i]; d.x += d.vx * dt; d.y += d.vy * dt;
-              if (d.y >= waterY) { makeSplash(d.x, waterY-1); ripples.push({ x: d.x, y: waterY, r: 1, life: 40 }); raindrops.splice(i,1); } 
+              if (d.y >= WATER_Y) { makeSplash(d.x, WATER_Y-1); ripples.push({ x: d.x, y: WATER_Y, r: 1, life: 40 }); raindrops.splice(i,1); } 
               else if (d.x < -15 || d.x > W+15 || d.y > H+5) { raindrops.splice(i,1); }
           }
       }
@@ -1618,8 +1625,8 @@
         p.x += (p.vx + weather.windX * 0.2) * dt;
         p.y += p.vy * dt;
         p.life -= dt;
-        if (p.x < -40 || p.x > W+40 || p.life <= 0 || p.y > waterY) {
-            if (p.y > waterY) makeSplash(p.x, waterY-1);
+        if (p.x < -40 || p.x > W+40 || p.life <= 0 || p.y > WATER_Y) {
+            if (p.y > WATER_Y) makeSplash(p.x, WATER_Y-1);
             powerups.splice(i, 1);
             continue;
         }
@@ -1646,7 +1653,8 @@
              d.y += d.fall * dt;
              d.x += (d.vx * 0.45 + weather.windX * 0.5) * dt; 
           }
-          if (d.y > H - (FOREGROUND_Y_OFFSET - 3) && !d.retrieved) { makeSplash(d.x, H - (FOREGROUND_Y_OFFSET - 3)); spawnDog(d.x, d.type); d.retrieved = true; } 
+          // Use WATER_Y for splash collision
+          if (d.y > WATER_Y - 2 && !d.retrieved) { makeSplash(d.x, WATER_Y - 2); spawnDog(d.x, d.type); d.retrieved = true; } 
           if (d.y > H + 50) { ducks.splice(i, 1); continue; } 
         }
         drawDuck(d);
@@ -2017,6 +2025,9 @@
 
     W = NATIVE_W;
     H = NATIVE_H;
+
+    // Update WATER_Y based on the new H
+    WATER_Y = H - (FOREGROUND_Y_OFFSET - 5);
     
     // Recenter hunter
     hunter.x = W/2 - 12;
@@ -2051,7 +2062,7 @@
       // Register the service worker (Make sure sw.js exists!)
       navigator.serviceWorker.register('./sw.js')
         .then(registration => {
-          console.log('ServiceWorker registration successful:', registration.scope);
+          // console.log('ServiceWorker registration successful:', registration.scope);
         })
         .catch(error => {
           console.log('ServiceWorker registration failed:', error);
