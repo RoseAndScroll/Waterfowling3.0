@@ -1,0 +1,1839 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover" />
+  <title>Waterfowling Redux — Enhanced Pixel Art Edition</title>
+
+  <!-- PWA Configuration: Link the Manifest -->
+  <link rel="manifest" href="./manifest.webmanifest">
+  
+  <!-- iOS Specific PWA Settings (Crucial for iPhone) -->
+  <!-- Enables standalone (fullscreen) mode on iOS -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <!-- Makes the status bar (time/battery) float over the game content -->
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Waterfowling">
+  <!-- iOS requires this specific link tag for the home screen icon (Ensure icon-192.png exists!) -->
+  <link rel="apple-touch-icon" href="./icon-192.png">
+
+  <!-- Standard Theme Color (Used by Android) -->
+  <meta name="theme-color" content="#0b0e1a">
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
+    :root { --bg: #000; }
+    html, body {
+      height: 100%;
+      width: 100%;
+      margin: 0;
+      background: var(--bg);
+      font-family: 'VT323', monospace;
+      color: #e6e6e6;
+      overflow: hidden;
+    }
+    .wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      width: 100%;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: manipulation;
+      position: relative;
+    }
+    canvas {
+      /* CRITICAL: Ensures pixel art remains crisp when scaled by the browser */
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      background: #0b0e1a;
+      cursor: crosshair;
+      display: block;
+    }
+    .hud {
+      position: absolute;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 16px;
+      opacity: .9;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 8px 10px;
+      width: 100%;
+      max-width: 480px;
+      /* Updated HUD background for a moodier look */
+      background: rgba(15, 10, 30, 0.7);
+      backdrop-filter: blur(2px);
+      -webkit-backdrop-filter: blur(2px);
+      border-top: 1px solid rgba(255,255,255,0.1);
+      box-sizing: border-box;
+      /* Ensures padding for notches/home bars on mobile */
+      padding-bottom: calc(8px + env(safe-area-inset-bottom));
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2px 16px;
+      text-align: left;
+      max-width: 300px;
+      margin: 0 auto;
+    }
+    #highScoreDisplay {
+        grid-column: span 2;
+        text-align: center;
+        margin-top: 4px;
+        opacity: 0.8;
+        font-size: 14px;
+    }
+    .tiny { font-size: 10px; opacity: .7; }
+    
+    .intro-overlay, .game-over-overlay, .level-complete-overlay {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      display: grid; place-items: center; 
+      color: white; text-shadow: 2px 2px 5px black;
+      flex-direction: column; gap: 20px; text-align: center;
+      padding: 20px;
+      box-sizing: border-box;
+    }
+    
+    .intro-overlay {
+        background-color: rgba(0, 0, 0, 0.9);
+        z-index: 20;
+        cursor: pointer;
+    }
+    .game-over-overlay, .level-complete-overlay {
+      display: none;
+      background-color: rgba(0, 0, 0, 0.7);
+      z-index: 10;
+      font-size: 40px;
+    }
+    .game-over-overlay button {
+      background: #1b1f2e;
+      color: #e6e6e6;
+      border: 1px solid #2a2f44;
+      padding: 8px 16px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 16px;
+    }
+
+    .score-display { font-size: 30px; text-shadow: 1px 1px 3px black; }
+    
+    @keyframes pulse {
+      50% { opacity: 0.5; }
+    }
+    .animate-pulse {
+      animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div id="introOverlay" class="intro-overlay">
+      <div class="text-center">
+        <div id="introText1" class="text-4xl"></div>
+        <div id="introText2" class="text-2xl mt-4"></div>
+      </div>
+    </div>
+    <div id="gameOverOverlay" class="game-over-overlay">
+      <span>GAME OVER</span>
+      <span id="finalScore" class="score-display">Score: 0</span>
+      <button id="restartOverlayButton">Restart</button>
+    </div>
+    <div id="levelCompleteOverlay" class="level-complete-overlay">
+      <span>LEVEL COMPLETE!</span>
+      <span id="nextLevelMessage" class="score-display">Prepare for Level 2...</span>
+    </div>
+
+    <canvas id="game" aria-label="pixel-art bird hunter shooting ducks in a marsh"></canvas>
+    
+    <div id="hud" class="hud" aria-live="polite" aria-atomic="true">
+      <div class="stats-grid">
+        <div id="scoreDisplay">Score: 0</div>
+        <div id="levelDisplay">Level: 1</div>
+        <div id="ducksDisplay">Ducks: 0/0</div>
+        <div id="ammoDisplay">Ammo: 0</div>
+        <div id="highScoreDisplay">High Score: 0</div>
+      </div>
+      <!-- ENHANCEMENT: Updated instructions to reflect new duck types (Mallard, Teal) and removal of the penalty duck -->
+      <div class="tiny">Mallard: +10 · Goose: +20 · Teal: +15 · Golden: +100 · Crate: +Ammo</div>
+    </div>
+  </div>
+
+<script>
+/* --- MAIN GAME SCRIPT --- */
+(() => {
+  // --- Canvas setup ---
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const introOverlay = document.getElementById('introOverlay');
+  const introText1 = document.getElementById('introText1');
+  const introText2 = document.getElementById('introText2');
+  const gameOverOverlay = document.getElementById('gameOverOverlay');
+  const finalScoreDisplay = document.getElementById('finalScore');
+  const levelCompleteOverlay = document.getElementById('levelCompleteOverlay');
+  const nextLevelMessage = document.getElementById('nextLevelMessage');
+  const hud = document.getElementById('hud');
+
+  // --- Config ---
+  const NATIVE_W = 360, NATIVE_H = 640;
+  let W = NATIVE_W, H = NATIVE_H;
+  const DUCK_SPAWN_BASE = 70;
+  let   MAX_DUCKS_ON_SCREEN = 9;
+  const PELLETS = 10;
+  const PELLET_SPEED = 16.0;
+  const RECOIL_FRAMES = 8;
+  const DAYLEN = 60 * 60;
+  const HIT_R2 = 144;
+  const SPRITE_SCALE = 3; 
+  const FOREGROUND_Y_OFFSET = 170; 
+  const POWERUP_SPAWN_INTERVAL = 60 * 40; // Approx every 40 seconds
+  
+  // --- Audio setup ---
+  // (Audio setup remains unchanged as it does not impact the visual style)
+  let audioContext;
+  let rainGainNode;
+  let windGainNode;
+  let backgroundAudioSetup = false;
+
+  function setAudioParam(param, value, time, type = 'linear') {
+      if (!audioContext || !param) return;
+      try {
+        if (type === 'linear' && typeof param.linearRampToValueAtTime === 'function') {
+            param.linearRampToValueAtTime(value, time);
+        } else if (type === 'exponential' && typeof param.exponentialRampToValueAtTime === 'function') {
+            param.exponentialRampToValueAtTime(value, time);
+        } else if (typeof param.setValueAtTime === 'function') {
+            param.setValueAtTime(value, time);
+        } else {
+            param.value = value;
+        }
+      } catch (e) { }
+  }
+
+  function setupBackgroundAudio() {
+    if (backgroundAudioSetup || !audioContext) return;
+    try {
+        const bufferSize = 2 * audioContext.sampleRate;
+        const noiseBuffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
+        let output = noiseBuffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) output[i] = Math.random() * 2 - 1;
+        
+        // Rain
+        const rainSource = audioContext.createBufferSource();
+        rainSource.buffer = noiseBuffer; rainSource.loop = true;
+        const rainFilter = audioContext.createBiquadFilter();
+        rainFilter.type = 'lowpass'; rainFilter.frequency.value = 600;
+        rainGainNode = audioContext.createGain();
+        rainGainNode.gain.value = 0;
+        rainSource.connect(rainFilter).connect(rainGainNode).connect(audioContext.destination);
+        rainSource.start();
+
+        // Wind
+        const windSource = audioContext.createBufferSource();
+        windSource.buffer = noiseBuffer; windSource.loop = true;
+        const windFilter = audioContext.createBiquadFilter();
+        windFilter.type = 'bandpass';
+        windFilter.frequency.value = 300;
+        windFilter.Q.value = 0.5;
+        windGainNode = audioContext.createGain();
+        windGainNode.gain.value = 0;
+        windSource.connect(windFilter).connect(windGainNode).connect(audioContext.destination);
+        windSource.start();
+
+        backgroundAudioSetup = true;
+    } catch (e) {
+        console.warn("Background audio setup failed:", e);
+    }
+  }
+
+  function createAudioContext() {
+    if (!audioContext) {
+      try {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        setupBackgroundAudio();
+      } catch(e) {
+        console.warn("Web Audio API is not supported in this browser");
+      }
+    }
+  }
+
+  function userGestureAudioUnlock(){
+    createAudioContext();
+    if (audioContext && audioContext.state === 'suspended') {
+        audioContext.resume().then(() => {
+            setupBackgroundAudio();
+        });
+    } else if (audioContext) {
+        setupBackgroundAudio();
+    }
+  }
+
+  function playSound(frequency, duration, type, volume) {
+    if (!audioContext) return;
+    try {
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+
+        oscillator.type = type;
+        oscillator.frequency.value = frequency;
+        setAudioParam(gainNode.gain, volume, audioContext.currentTime, 'set');
+
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+
+        oscillator.start();
+        setAudioParam(gainNode.gain, 0.001, audioContext.currentTime + duration, 'exponential');
+        oscillator.stop(audioContext.currentTime + duration);
+    } catch (e) { }
+  }
+  
+  function playJingle(notes, tempo=120) {
+    if (!audioContext) return;
+    let startTime = audioContext.currentTime;
+    const noteDuration = 60 / tempo;
+    notes.forEach(note => {
+      if (note.freq === null) { startTime += note.duration * noteDuration; return; }
+      try {
+          const oscillator = audioContext.createOscillator();
+          const gainNode = audioContext.createGain();
+          oscillator.type = note.type || 'sine';
+          oscillator.frequency.value = note.freq;
+          
+          setAudioParam(gainNode.gain, 0, startTime, 'set');
+          setAudioParam(gainNode.gain, 0.3, startTime + 0.01, 'linear');
+          setAudioParam(gainNode.gain, 0.001, startTime + note.duration * noteDuration, 'linear');
+
+          oscillator.connect(gainNode);
+          gainNode.connect(audioContext.destination);
+          oscillator.start(startTime);
+          oscillator.stop(startTime + note.duration * noteDuration);
+      } catch (e) { }
+      startTime += note.duration * noteDuration;
+    });
+  }
+
+  function playShotSound() { playSound(200, 0.1, 'sawtooth', 0.5); playSound(400, 0.05, 'square', 0.2); }
+  function playDuckHitSound() { const baseFreq1 = 780 + R(40); const baseFreq2 = 580 + R(40); playSound(baseFreq1, 0.05, 'sine', 0.3); playSound(baseFreq2, 0.05, 'sine', 0.2); }
+  function playGoldenHitSound() { const notes = [{ freq: 1000, duration: 0.1, type: 'triangle'}, { freq: 1500, duration: 0.1, type: 'triangle'}, { freq: 2000, duration: 0.2, type: 'triangle'}]; playJingle(notes, 300); }
+  function playRushStartSound() { playSound(800, 0.1, 'square', 0.3); setTimeout(() => playSound(1000, 0.1, 'square', 0.3), 150); }
+  function playPickupSound() { playSound(880, 0.05, 'square', 0.2); setTimeout(() => playSound(1100, 0.05, 'square', 0.2), 50); }
+  function playPenaltySound() { playSound(120, 0.15, 'sawtooth', 0.4); playSound(100, 0.15, 'sawtooth', 0.4); }
+  function playDogBark() { playSound(150, 0.08, 'sawtooth', 0.3); setTimeout(() => playSound(180, 0.08, 'sawtooth', 0.3), 100); }
+  function playGameOverJingle() { const notes = [ { freq: 261.63, duration: 0.5 }, { freq: 246.94, duration: 0.5 }, { freq: 233.08, duration: 0.5 }, { freq: 220.00, duration: 1.5 } ]; playJingle(notes, 120); }
+  function playLevelCompleteJingle() { const notes = [ { freq: 392.00, duration: 0.5 }, { freq: 523.25, duration: 0.5 }, { freq: 659.25, duration: 0.5 }, { freq: 783.99, duration: 1.5 } ]; playJingle(notes, 150); }
+  function playLauncherSound() { playSound(100, 0.05, 'square', 0.6); playSound(400, 0.2, 'sine', 0.1); }
+  function playClayShatterSound() { playSound(1200, 0.1, 'triangle', 0.3); playSound(1800, 0.05, 'triangle', 0.2); }
+
+
+  // --- Input state ---
+  let mouse = { x: W / 2, y: H * 0.6, down: false };
+  let gameOver = false;
+  let gameStarted = false;
+
+  // --- Game state ---
+  let gameClock = 0, lastTime = 0;
+  let score = 0, ammo = 0, level = 1;
+  let highScore = 0;
+  let ducksShot = 0;
+  let ducksToShoot = 0;
+  let pellets = [], ducks = [], splashes = [], reeds = [], particles = [], ripples = [];
+  let clouds = [], raindrops = [];
+  let powerups = [];
+  let floatingTexts = [];
+  let treeLine = [];
+  let weather = { raining: false, until: 0, windX: 0, windTarget: 0, windChangeTimer: 0 };
+  let hunter = { x: W/2 - 12, y: H - FOREGROUND_Y_OFFSET, aiming: 0, recoil: 0, muzzleFlash: 0 };
+  let dogs = [];
+  let prevAccuracy = null, nextSpawnAt = 0, currentParams = null, shotsFired = 0;
+  let nextPowerupSpawn = 0;
+  let cloudSpawnTimer = 90;
+  let levelTransitioning = false;
+  let duckRush = false;
+  let isBonusRound = false;
+  let clays = [];
+  let claysLaunched = 0;
+  let claysToLaunch = 0;
+  let claysHit = 0;
+  let nextClayAt = 0;
+
+  // --- Utility ---
+  const R = (n=1) => Math.random() * n;
+  const RI = (a,b) => Math.floor(a + Math.random()*(b-a+1));
+  const clamp = (v,a,b) => v < a ? a : v > b ? b : v;
+  const easeOut = (t) => 1 - Math.pow(1 - t, 2);
+
+  function p(x, y, color) { ctx.fillStyle = color; ctx.fillRect(Math.round(x), Math.round(y), 1, 1); }
+  function r(x,y,w,h,color) { ctx.fillStyle = color; ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h)); }
+  function l(x0,y0,x1,y1,color) { x0=Math.round(x0); y0=Math.round(y0); x1=Math.round(x1); y1=Math.round(y1); let dx = Math.abs(x1-x0), dy = -Math.abs(y1-y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1; let err = dx + dy; while (true) { p(x0, y0, color); if (x0===x1 && y0===y1) break; let e2 = 2*err; if (e2 >= dy) { err += dy; x0 += sx; } if (e2 <= dx) { err += dx; y0 += sy; } } }
+  // Ensure pixelCircle sets the fillStyle correctly before drawing
+  function pixelCircle(x, y, radius, color) { ctx.fillStyle = color; for (let i=-radius; i<=radius; i++) for (let j=-radius; j<=radius; j++) if (i*i + j*j <= radius*radius) ctx.fillRect(Math.round(x+i), Math.round(y+j), 1, 1); }
+
+  function floatText(x, y, text, color = '#fff', life = 60) {
+    floatingTexts.push({ x, y, text, color, life, vy: -0.8 });
+  }
+
+  // --- Gradients ---
+  function getGradientColor(t, stops) {
+    function mix(a, b, t) { return a + (b - a) * t; }
+    for (let i = 0; i < stops.length - 1; i++) { const s1 = stops[i]; const s2 = stops[i + 1]; if (t >= s1.t && t <= s2.t) { const localT = (t - s1.t) / (s2.t - s1.t); const r = mix(s1.c[0], s2.c[0], localT); const g = mix(s1.c[1], s2.c[1], localT); const b = mix(s1.c[2], s2.c[2], localT); return `rgb(${r|0},${g|0},${b|0})`; } }
+    // Handle wrap around or edge cases gracefully
+    if (stops.length > 0) {
+        const lastStop = stops[stops.length - 1];
+        return `rgb(${lastStop.c[0]|0},${lastStop.c[1]|0},${lastStop.c[2]|0})`;
+    }
+    return `rgb(0,0,0)`;
+  }
+
+  // ENHANCEMENT: New Atmospheric Palettes for Sky, Water, and Clouds
+  // These focus on deep blues, purples, and dramatic warm glows at the horizon.
+  const skyStops = [
+      // Deep Night (Indigo/Purple)
+      {t: 0.00, c: [15, 10, 30]},
+      {t: 0.20, c: [20, 15, 40]},
+      // Sunrise Start (Deep purple to warm glow)
+      {t: 0.25, c: [40, 30, 60]},
+      {t: 0.28, c: [255, 100, 60]}, // Intense horizon glow
+      {t: 0.30, c: [255, 180, 120]}, // Softer glow
+      // Morning (Muted, cool blues)
+      {t: 0.35, c: [100, 120, 180]},
+      {t: 0.50, c: [160, 190, 220]}, // Midday (Desaturated)
+      // Sunset Start
+      {t: 0.70, c: [100, 120, 180]},
+      {t: 0.75, c: [255, 160, 100]},
+      {t: 0.80, c: [200, 80, 50]},
+      // Twilight
+      {t: 0.85, c: [50, 40, 70]},
+      {t: 1.00, c: [15, 10, 30]}
+  ];
+
+  const waterStops = [
+      // Darker reflection of the sky
+      {t: 0.00, c: [10, 8, 20]},
+      {t: 0.20, c: [15, 12, 30]},
+      {t: 0.25, c: [30, 20, 45]},
+      {t: 0.28, c: [200, 80, 50]}, // Reflected glow
+      {t: 0.30, c: [200, 140, 100]},
+      {t: 0.35, c: [80, 90, 140]},
+      {t: 0.50, c: [120, 140, 180]},
+      {t: 0.70, c: [80, 90, 140]},
+      {t: 0.75, c: [200, 130, 80]},
+      {t: 0.80, c: [160, 60, 40]},
+      {t: 0.85, c: [40, 30, 50]},
+      {t: 1.00, c: [10, 8, 20]}
+  ];
+
+  // New Cloud Color Stops (Dark centers, bright edges near sunrise/sunset)
+  const cloudBaseStops = [
+      {t: 0.00, c: [30, 25, 50]}, // Night - very dark purple/blue
+      {t: 0.25, c: [60, 50, 80]}, // Sunrise base - dark, moody
+      {t: 0.35, c: [120, 140, 170]}, // Morning - cool gray
+      {t: 0.50, c: [180, 200, 220]}, // Day - light gray
+      {t: 0.75, c: [80, 60, 90]}, // Sunset base
+      {t: 1.00, c: [30, 25, 50]}
+  ];
+  const cloudHighlightStops = [
+      {t: 0.00, c: [50, 45, 70]},
+      {t: 0.25, c: [255, 180, 120]}, // Sunrise highlight - bright orange/yellow (Rim lighting)
+      {t: 0.35, c: [160, 180, 200]},
+      {t: 0.50, c: [240, 245, 250]},
+      {t: 0.75, c: [255, 200, 140]}, // Sunset highlight
+      {t: 1.00, c: [50, 45, 70]}
+  ];
+  
+  // ENHANCEMENT: Generate a more naturalistic, textured tree line
+  function generateTreeLine() {
+    treeLine = [];
+    let y = 10;
+    for (let i = 0; i < W; i++) {
+      // Smoother variation using noise-like functions
+      y += (Math.random() - 0.5) * 0.5;
+      const noise = Math.sin(i * 0.05) * 3 + Math.sin(i * 0.1) * 1.5;
+      const height = Math.max(5, y + noise);
+      // Store height and a density value for adding texture later
+      treeLine.push({ height, density: Math.random() });
+    }
+  }
+
+  function generateReeds() { reeds = []; for (let i=0;i<100;i++) { reeds.push({ x: RI(0,W-1), h: RI(8,22), seed: R(1000), layer: Math.random() < 0.3 ? 2 : (Math.random() < 0.6 ? 1 : 0), type: Math.random() < 0.2 ? 'cattail' : 'simple' }); } reeds.sort((a, b) => a.layer - b.layer); }
+
+  function spawnCloud() { const dirRight = Math.random() < 0.5; const cloud = { x: dirRight ? -40 : W + 40, y: RI(8, H * 0.3), vx: (dirRight ? 0.3 : -0.3) * (0.5 + R(0.6)), life: RI(1800, 2400), puffs: [] }; const puffCount = RI(8, 15); for (let i = 0; i < puffCount; i++) cloud.puffs.push({ dx: (R(1) - 0.5) * 30, dy: (R(1) - 0.8) * 10, r: RI(5, 10) }); clouds.push(cloud); }
+  
+  // ENHANCEMENT: Painterly Cloud Rendering with Dynamic Lighting and Reflections
+  function drawClouds(isReflection = false) {
+    const t = (gameClock % DAYLEN) / DAYLEN;
+    // Get dynamic colors based on time of day
+    const baseColor = getGradientColor(t, cloudBaseStops);
+    const highlightColor = getGradientColor(t, cloudHighlightStops);
+
+    // Determine light direction (simulating rim lighting during golden hour)
+    const isGoldenHour = (t > 0.20 && t < 0.35) || (t > 0.70 && t < 0.85);
+    // During golden hour, light comes from below (highlight on bottom); otherwise from above.
+    const lightOffsetY = isGoldenHour ? 1.5 : -1.5;
+
+    // Adjust opacity for reflections (dimmer)
+    const baseAlpha = isReflection ? 0.4 : 0.85;
+    const highlightAlpha = isReflection ? 0.5 : 0.95;
+
+
+    for (let i = clouds.length - 1; i >= 0; i--) {
+        const c = clouds[i];
+
+        // 1. Draw base shape (The dark, moody center)
+        ctx.globalAlpha = baseAlpha;
+        c.puffs.forEach(puff => {
+            pixelCircle(c.x + puff.dx, c.y + puff.dy, puff.r, baseColor);
+        });
+
+        // 2. Draw highlights (The painterly, bright edges)
+        ctx.globalAlpha = highlightAlpha;
+        c.puffs.forEach(puff => {
+            // Apply highlight primarily on the side facing the light source
+            const highlightRadius = puff.r * 0.7;
+            const highlightX = c.x + puff.dx;
+            // Offset the highlight vertically based on light direction
+            const highlightY = c.y + puff.dy + (puff.r * 0.5 * lightOffsetY);
+
+            // Use clustering: Add randomness so highlights aren't uniform circles
+            if (Math.random() > 0.3) {
+                pixelCircle(highlightX, highlightY, highlightRadius, highlightColor);
+            }
+        });
+        ctx.globalAlpha = 1.0;
+    }
+  }
+
+  function spawnRainTick() {
+    const vx = -0.6 + weather.windX * 0.8;
+    for (let i=0;i<RI(2,6);i++) raindrops.push({ x: RI(0, W), y: RI(0, H * 0.4), vx: vx, vy: 3.6 + R(1.2) });
+  }
+
+  function drawRain() {
+    // Updated rain color for a cooler, atmospheric look
+    const rainColor = '#607D8B';
+    for (let i=raindrops.length-1; i>=0; i--) {
+        const d = raindrops[i];
+        l(d.x, d.y, d.x - d.vx*0.5, d.y - d.vy*0.5, rainColor);
+    }
+  }
+
+  function getLevelParams(l, acc){
+    const L = Math.max(1, l); const t = clamp((L-1)/8, 0, 1); const e = easeOut(t);
+    const spawnInterval = Math.round(clamp(DUCK_SPAWN_BASE - 52*e - 5*L, 14, 70));
+    const maxOnScreen  = clamp(7 + Math.floor(L*0.75), 7, 14);
+    // fastProb now represents the chance of Teal spawning
+    let fastProb = L < 2 ? 0.05 * L : clamp(0.08 + 0.05*(L-2) + 0.15*e, 0.08, 0.50);
+    if (acc != null && acc < 0.35) fastProb = Math.max(0.05, fastProb - 0.04);
+    const gooseProb = clamp(0.01 + 0.004*L, 0.01, 0.05);
+    const goldenProb = clamp(0.005 + 0.001*L, 0.005, 0.02);
+    const rushProb = clamp(0.0001 + 0.00005*L, 0.0001, 0.0005);
+
+    const speedNormal = clamp(1.85 + 0.08*L + 0.50*e, 1.85, 3.50);
+    const speedFast   = clamp(2.60 + 0.10*L + 0.60*e, 2.60, 4.20);
+    const speedGoose  = clamp(1.60 + 0.05*L + 0.40*e, 1.60, 3.00);
+    const ducksNeeded = clamp(5 + Math.round(1.9*L + 2.3*e), 5, 28);
+    let ammoBuffer = 1; if (acc != null) { if (acc < 0.35) ammoBuffer = 4; else if (acc < 0.5) ammoBuffer = 3; else if (acc > 0.8) ammoBuffer = 0; }
+    return { spawnInterval, maxOnScreen, fastProb, gooseProb, goldenProb, rushProb, speedNormal, speedFast, speedGoose, ducksNeeded, ammoBuffer };
+  }
+
+  function startDuckRush() {
+    if (duckRush || levelTransitioning || isBonusRound) return;
+    duckRush = true;
+    playRushStartSound();
+    floatText(W/2, H*0.1, "DUCK RUSH!", '#ff6347', 300);
+    setTimeout(() => {
+        duckRush = false;
+        nextSpawnAt = gameClock + 60;
+    }, 5000);
+  }
+
+  function spawnDuck() {
+    if (!duckRush && ducks.filter(d => d.alive).length >= MAX_DUCKS_ON_SCREEN) return;
+
+    const fromLeft = Math.random() < 0.5;
+    const x = fromLeft ? -10 : W+10;
+    const y = RI(H * 0.1, H * 0.35); 
+    const base = 1.0 + R(1.0);
+
+    const roll = Math.random(); let type = 'normal';
+    if (roll < currentParams.goldenProb) type = 'golden';
+    else if (roll < currentParams.goldenProb + currentParams.gooseProb) type = 'goose';
+    else if (roll < currentParams.goldenProb + currentParams.gooseProb + currentParams.fastProb) type = 'fast'; // Teal
+
+    const vx = (fromLeft ? 1 : -1) * base; const vy = (R(1)-.5)*0.35;
+    const duck = { x, y, vx, vy, s: 1, flap: 0, alive: true, fall: 0, frame: 0, type, hit: false, retrieved: false };
+    if (type === 'golden') { duck.zigF = 0.25; duck.zigA = 0.7; duck.zigPhase = R(Math.PI*2); }
+    if (type === 'fast') { duck.zigF = 0.32 + R(0.20); duck.zigA = 0.9 + R(0.6); duck.zigPhase = R(Math.PI*2); }
+    if (type === 'goose') { duck.zigF = 0.10 + R(0.05); duck.zigA = 0.25 + R(0.15); duck.zigPhase = R(Math.PI*2); }
+    ducks.push(duck);
+  }
+
+  function spawnClay() {
+    playLauncherSound();
+    const fromLeft = Math.random() < 0.5;
+    const x = fromLeft ? -10 : W + 10;
+    const y = H - FOREGROUND_Y_OFFSET + 20;
+    const vx = (fromLeft ? 1 : -1) * (5.5 + R(1.5));
+    const vy = - (6.0 + R(2.0)); // Launch upwards
+    clays.push({ x, y, vx, vy, alive: true, rotation: 0, rotSpeed: (R(1) - 0.5) * 0.2 });
+    claysLaunched++;
+  }
+
+  function spawnPowerup() {
+    const fromLeft = Math.random() < 0.5;
+    const x = fromLeft ? -20 : W+20;
+    const y = RI(H * 0.2, H * 0.35);
+    const vx = (fromLeft ? 1 : -1) * 1.1;
+    powerups.push({ x, y, vx, vy: 0.3, type: 'ammo', life: 800 });
+  }
+
+  // Updated splash color for better integration
+  function makeSplash(x,y) { for (let i=0;i<12;i++) splashes.push({ x, y, vx:(R(1)-.5)*0.9, vy: -R(1.3), life: 40, color: '#B0BEC5' }); }
+  
+  function createParticles(x, y, n = 6, color = '#d8e2f2', life = 24, speed = 0.5, gravity = 0) {
+    for (let i = 0; i < n; i++) {
+        particles.push({
+        x, y,
+        vx: (R(1) - 0.5) * speed,
+        vy: (R(1) - 0.5) * speed,
+        life: life,
+        color,
+        gravity
+        });
+    }
+  }
+
+  // ENHANCEMENT: Updated feather colors to match new sprites
+  function featherBurst(x, y, type) {
+    let colors = [];
+    // Goose (Canada Goose)
+    if (type === 'goose') colors = ['#5d4037', '#8d6e63', '#212121', '#f5f5f5'];
+    // Fast (Teal)
+    else if (type === 'fast') colors = ['#795548', '#1b5e20', '#bdbdbd', '#9e9e9e'];
+    // Golden
+    else if (type === 'golden') colors = ['#ffd700', '#ffec8b', '#ffa500'];
+    // Normal (Mallard)
+    else colors = ['#6d4c3b', '#a1887f', '#1b5e20', '#3949ab'];
+
+    for (let i = 0; i < 18; i++) {
+        const color = colors[RI(0, colors.length - 1)];
+        particles.push({
+          x, y,
+          vx: (R(1) - 0.5) * 1.5,
+          vy: -R(1.0) * 1.8,
+          life: 60 + R(40),
+          color,
+          gravity: 0.04,
+        });
+    }
+  }
+
+  function shoot(targetX, targetY) {
+    if (gameOver || !gameStarted || ammo <= 0 || levelTransitioning) return;
+    playShotSound(); ammo--; shotsFired++;
+    hunter.recoil = RECOIL_FRAMES;
+
+    // Calculate gun origin based on current scale (matching drawHunter)
+    const s = SPRITE_SCALE * 0.9;
+    const gunOriginX = hunter.x + 10*s;
+    const gunOriginY = hunter.y - 16*s;
+
+    hunter.muzzleFlash = 2;
+    // Particles visualization (muzzle flash visual is handled in drawHunter)
+    createParticles(gunOriginX, gunOriginY, 5); 
+    
+    const dx = targetX - gunOriginX, dy = targetY - gunOriginY;
+    const ang = Math.atan2(dy, dx);
+    for (let i=0;i<PELLETS;i++) {
+      const spread = (Math.random()-0.5) * 0.20;
+      // Pellets originate from the rotation origin
+      pellets.push({ x: gunOriginX, y: gunOriginY, vx: Math.cos(ang + spread) * PELLET_SPEED * (0.9 + R(0.3)), vy: Math.sin(ang + spread) * PELLET_SPEED * (0.9 + R(0.3)), life: 90 });
+    }
+  }
+
+  // Hunter sprite remains the same as the original provided code, which already used a refined, hue-shifted palette.
+  function drawHunter() {
+    const hx = hunter.x, hy = hunter.y;
+    const s = SPRITE_SCALE * 0.9;
+    const skin = '#d9a066', skin_dark = '#b57a47';
+    const hair = '#45283c';
+    
+    // Refined Colors (Hue Shifted)
+    const coat = '#6a5a3c';          // Base (Warmer)
+    const coat_light = '#8a795a';    // Highlight (Lighter, towards yellow)
+
+    const vest = '#3a5229', vest_light = '#4b6b33';
+    const shirt = '#c2c3c7';
+    
+    const pants = '#4c5a5a';         // Base (Cooler, contrast with coat)
+    const pants_dark = '#3a4747';    // Shadow
+
+    const boots = '#4a3b2a', boots_light = '#6d5c4b';
+    const tweed_dark = '#5a524c', tweed_light = '#6d625c';
+
+    const gunWood = '#6d4c3b', gunWoodDark = '#4a3326', gunMetal = '#666', gunMetalDark = '#444';
+    // This origin point is used for rotation and shooting.
+    const originX = hx + 10*s, originY = hy - 16*s;
+
+    ctx.save();
+    ctx.translate(hx, hy);
+    ctx.scale(s, s);
+
+    // Legs and Boots
+    r(2, -10, 2, 10, boots); r(6, -10, 2, 10, boots);
+    p(2, -1, boots_light); p(6, -1, boots_light);
+    r(2, -14, 2, 4, pants); r(6, -14, 2, 4, pants);
+    p(3, -14, pants_dark); p(7, -14, pants_dark);
+    
+    // Torso and Coat
+    r(2, -22, 7, 8, coat);
+    
+    // Improved Highlights (Shoulders and Chest)
+    p(3, -22, coat_light); // Left shoulder top
+    p(7, -22, coat_light); // Right shoulder top
+    r(3, -21, 5, 1, coat_light); // Across the chest area
+
+    // Vest and Shirt
+    r(3, -20, 5, 6, vest);
+    r(3, -20, 5, 1, vest_light);
+    r(4, -21, 3, 1, shirt);
+    
+    // Head and Hat
+    r(3, -27, 5, 4, skin);
+    p(7, -26, skin_dark);
+    p(4, -25, hair);
+    p(7, -25, hair);
+    p(8, -26, skin);
+    r(4, -24, 3, 1, hair);
+    r(2, -29, 7, 2, tweed_dark);
+    p(3, -29, tweed_light); p(5, -29, tweed_light); p(7, -29, tweed_light);
+    p(2, -28, tweed_light); p(4, -28, tweed_light); p(6, -28, tweed_light);
+    r(7, -28, 3, 1, tweed_dark);
+    ctx.restore();
+
+    // Arms and Gun (Rotated)
+    // Use mouse position relative to the actual rotation origin for accurate aiming
+    const ang = Math.atan2(mouse.y - originY, mouse.x - originX);
+    const recoilOffset = (hunter.recoil > 0 ? -2 : 0);
+
+    ctx.save(); ctx.translate(originX, originY); ctx.rotate(ang); ctx.scale(s,s);
+    
+    // Back Arm
+    ctx.fillStyle = coat;
+    ctx.beginPath();
+    ctx.moveTo(2, -2); ctx.lineTo(-4, 2); ctx.lineTo(-2, 4); ctx.lineTo(0, 4);
+    ctx.lineTo(0, 3); ctx.lineTo(4, 0); ctx.closePath(); ctx.fill();
+    p(-3, 3, coat_light);
+
+    // Front Arm
+    const arm_sleeve = coat;
+    const arm_hand = skin;
+    ctx.fillStyle = arm_sleeve;
+    ctx.beginPath();
+    ctx.moveTo(-6, -2); ctx.lineTo(0, 1); ctx.lineTo(7, 1); ctx.lineTo(9, 3);
+    ctx.lineTo(7, 4); ctx.lineTo(0, 3); ctx.lineTo(-4, 0); ctx.closePath(); ctx.fill();
+    r(7, 1, 3, 3, arm_hand);
+
+    // Gun
+    r(-10 + recoilOffset, 0, 10, 2, gunWood);
+    p(-11 + recoilOffset, 1, gunWood);
+    r(-8 + recoilOffset, 2, 6, 1, gunWoodDark);
+    r(0 + recoilOffset, -1, 4, 3, gunMetal);
+    p(1 + recoilOffset, 0, gunMetalDark);
+    p(1 + recoilOffset, 2, gunMetalDark);
+    p(0 + recoilOffset, 3, gunMetal); p(1 + recoilOffset, 4, gunMetal); p(2 + recoilOffset, 3, gunMetal);
+    r(3 + recoilOffset, -1, 18, 2, gunMetalDark);
+    r(3 + recoilOffset, -1, 18, 1, gunMetal);
+    r(4 + recoilOffset, 1, 8, 1, gunWood);
+    r(5 + recoilOffset, 2, 6, 1, gunWoodDark);
+    ctx.restore();
+
+    // Muzzle Flash
+    if (hunter.muzzleFlash > 0) {
+      const endX = originX + Math.cos(ang) * (22*s + recoilOffset);
+      const endY = originY + Math.sin(ang) * (22*s + recoilOffset);
+      const fx = endX, fy = endY;
+      r(fx - 1*s, fy - 1*s, 3*s, 3*s, '#fff3a0'); p(fx + 2*s, fy, '#ffd46b'); p(fx - 2*s, fy, '#ffd46b'); p(fx, fy + 2*s, '#ffd46b'); p(fx, fy - 2*s, '#ffd46b');
+    }
+  }
+  
+  // ENHANCEMENT: Updated Dog Sprites (Darker, more naturalistic colors)
+  const dogSprites = {
+    carrying: [
+      // Changed colors to a dark brown (e.g., Chocolate Lab/Chesapeake)
+      (ctx, x, y) => { const light = '#795548', mid = '#4e342e', black = '#111'; r(x+1, y+8, 10, 5, mid); r(x+2, y+9, 8, 3, light); r(x+9, y+7, 4, 4, mid); r(x+10, y+8, 2, 2, light); r(x+12, y+8, 2, 1, black); p(x+10, y+8, black); r(x+8, y+6, 2, 2, mid); r(x, y+10, 2, 2, mid); r(x+2, y+13, 2, 4, mid); r(x+3, y+13, 1, 3, light); r(x+8, y+13, 2, 4, mid); r(x+9, y+13, 1, 3, light); },
+      (ctx, x, y) => { const light = '#795548', mid = '#4e342e', black = '#111'; r(x+1, y+9, 10, 5, mid); r(x+2, y+10, 8, 3, light); r(x+9, y+8, 4, 4, mid); r(x+10, y+9, 2, 2, light); r(x+12, y+9, 2, 1, black); p(x+10, y+9, black); r(x+8, y+7, 2, 2, mid); r(x, y+11, 2, 2, mid); r(x+3, y+14, 2, 3, mid); r(x+4, y+14, 1, 2, light); r(x+7, y+14, 2, 3, mid); r(x+8, y+14, 1, 2, light); },
+      (ctx, x, y) => { const light = '#795548', mid = '#4e342e', black = '#111'; r(x+1, y+8, 10, 5, mid); r(x+2, y+9, 8, 3, light); r(x+9, y+7, 4, 4, mid); r(x+10, y+8, 2, 2, light); r(x+12, y+8, 2, 1, black); p(x+10, y+8, black); r(x+8, y+6, 2, 2, mid); r(x, y+10, 2, 2, mid); r(x+8, y+13, 2, 4, mid); r(x+9, y+13, 1, 3, light); r(x+2, y+13, 2, 4, mid); r(x+3, y+13, 1, 3, light); },
+      (ctx, x, y) => { const light = '#795548', mid = '#4e342e', black = '#111'; r(x+1, y+9, 10, 5, mid); r(x+2, y+10, 8, 3, light); r(x+9, y+8, 4, 4, mid); r(x+10, y+9, 2, 2, light); r(x+12, y+9, 2, 1, black); p(x+10, y+9, black); r(x+8, y+7, 2, 2, mid); r(x, y+11, 2, 2, mid); r(x+7, y+14, 2, 3, mid); r(x+8, y+14, 1, 2, light); r(x+3, y+14, 2, 3, mid); r(x+4, y+14, 1, 2, light); }
+    ]
+  };
+
+  function spawnDog(duckX, duckType) { playDogBark(); const dirRight = duckX > W / 2; const vx = dirRight ? 1.2 : -1.2; dogs.push({ x: duckX, y: H - (FOREGROUND_Y_OFFSET - 5), frame: 0, state: 'carrying', vx, duckType }); }
+  
+  // ENHANCEMENT: Update dog retrieval visualization to match new sprites
+  function drawDogs() {
+    if (!dogs || !Array.isArray(dogs)) return;
+    for (const dog of dogs) {
+      const sprite = dogSprites[dog.state][(dog.frame / 5 | 0) % dogSprites[dog.state].length];
+      if (sprite) {
+        ctx.save();
+        if (dog.vx < 0) { ctx.translate(dog.x + 16 * SPRITE_SCALE, dog.y); ctx.scale(-1, 1); } else { ctx.translate(dog.x, dog.y); }
+        ctx.scale(SPRITE_SCALE, SPRITE_SCALE);
+        sprite(ctx, 0, 0);
+        // Draw the retrieved duck in the dog's mouth
+        switch(dog.duckType) {
+            // Updated Goose
+            case 'goose': r(12, 8, 5, 2, '#5d4037'); r(16, 7, 2, 3, '#212121'); p(18, 7, '#333'); break;
+            // Updated Fast (Teal)
+            case 'fast': r(12, 8, 5, 2, '#bdbdbd'); r(16, 7, 2, 2, '#795548'); p(18, 8, '#616161'); break;
+            // Golden
+            case 'golden': r(12, 8, 4, 2, '#ffd700'); r(15, 7, 2, 2, '#ffec8b'); p(17, 8, '#ffa500'); break;
+            // Updated Normal (Mallard)
+            default: r(12, 8, 4, 2, '#6d4c3b'); r(15, 7, 2, 2, '#1b5e20'); p(17, 8, '#ffd54f'); break;
+        }
+        ctx.restore();
+      }
+    }
+  }
+
+  // ENHANCEMENT: Atmospheric Reeds with Hue-Shifting and Dynamic Lighting
+  function drawReeds() {
+    const waterY = H - (FOREGROUND_Y_OFFSET - 5);
+    const t = (gameClock % DAYLEN) / DAYLEN;
+
+    // Define hue-shifted colors based on lighting and depth (Layer 0=Closest/Darkest, 2=Farthest/Lightest)
+    // This uses the painterly technique of adjusting color based on atmospheric light.
+
+    // Layer 0 (Closest) - Deep, cool greens
+    const color0_base = getGradientColor(t, [{t:0, c:[20, 30, 15]}, {t:0.3, c:[40, 60, 30]}, {t:0.5, c:[50, 75, 35]}, {t:1, c:[20, 30, 15]}]);
+    const color0_highlight = getGradientColor(t, [{t:0, c:[30, 45, 20]}, {t:0.3, c:[60, 90, 40]}, {t:0.5, c:[70, 105, 50]}, {t:1, c:[30, 45, 20]}]);
+    // Layer 1 (Mid) - Slightly warmer
+    const color1_base = getGradientColor(t, [{t:0, c:[30, 45, 20]}, {t:0.3, c:[60, 85, 40]}, {t:0.5, c:[80, 110, 60]}, {t:1, c:[30, 45, 20]}]);
+    const color1_highlight = getGradientColor(t, [{t:0, c:[40, 60, 25]}, {t:0.3, c:[80, 115, 55]}, {t:0.5, c:[100, 140, 80]}, {t:1, c:[40, 60, 25]}]);
+    // Layer 2 (Farthest) - Most influenced by light
+    const color2_base = getGradientColor(t, [{t:0, c:[40, 55, 25]}, {t:0.3, c:[90, 120, 50]}, {t:0.5, c:[120, 160, 80]}, {t:1, c:[40, 55, 25]}]);
+    const color2_highlight = getGradientColor(t, [{t:0, c:[50, 70, 30]}, {t:0.3, c:[110, 150, 70]}, {t:0.5, c:[150, 200, 100]}, {t:1, c:[50, 70, 30]}]);
+
+    // Cattail Colors (Earthy browns)
+    const cattailColors = [
+        getGradientColor(t, [{t:0, c:[60, 40, 20]}, {t:0.5, c:[90, 60, 30]}, {t:1, c:[60, 40, 20]}]), // Dark
+        getGradientColor(t, [{t:0, c:[80, 55, 30]}, {t:0.5, c:[120, 80, 40]}, {t:1, c:[80, 55, 30]}]), // Mid
+        getGradientColor(t, [{t:0, c:[100, 70, 40]}, {t:0.5, c:[150, 100, 50]}, {t:1, c:[100, 70, 40]}]) // Light
+    ];
+
+    reeds.forEach(rd => {
+      const timeSway = Math.sin(gameClock*0.035 + rd.seed) * (1.2 - rd.layer * 0.4);
+      const windSway = weather.windX * (2.5 - rd.layer * 0.5);
+      const sway = timeSway + windSway;
+
+      const x = rd.x;
+      const y = waterY;
+
+      let green1, green2;
+      switch(rd.layer) {
+          case 0: green1 = color0_highlight; green2 = color0_base; break;
+          case 1: green1 = color1_highlight; green2 = color1_base; break;
+          default: green1 = color2_highlight; green2 = color2_base; break;
+      }
+      const cattailColor = cattailColors[rd.layer];
+
+      // Draw the stalk (Clustering technique: varying thickness)
+      for (let j = 0; j < rd.h; j++) {
+          const currentSway = sway * (j / rd.h);
+          const drawX = x + currentSway;
+          // Use highlights near the top
+          p(drawX, y - j, j > rd.h * 0.6 ? green1 : green2);
+
+          // Make closer layers potentially thicker to enhance depth
+          if (rd.layer < 2 && rd.seed > 0.5) {
+             p(drawX - 1, y - j, green2);
+          }
+      }
+
+      // Draw leaves (if not cattail)
+      if (rd.type !== 'cattail') {
+          const leafCount = Math.floor(rd.h / 8);
+          for (let i = 0; i < leafCount; i++) {
+              const j = (i * 8) + 4;
+              const leafY = y - j;
+              const leafSway = sway * (j / rd.h);
+              const direction = (rd.seed * i) % 2 === 0 ? 1 : -1;
+              const leafLength = 3 + R(2);
+              for (let k = 0; k < leafLength; k++) {
+                  p(x + leafSway + (k * direction), leafY - k, green1);
+              }
+          }
+      }
+
+      // Draw cattail top
+      if (rd.type === 'cattail') {
+          const topY = y - rd.h;
+          const topSway = sway;
+          r(x + topSway - 1, topY - 4, 2, 4, cattailColor);
+      }
+    });
+  }
+
+  let starField = null;
+  function ensureStars(){ if (!starField) starField = Array.from({length: 60}, () => ({x: RI(0,W), y: RI(0, H * 0.5), a: Math.random()*0.8})); }
+  function drawStars(sunElev){ if (sunElev > 0.1) { starField = null; return; } ensureStars(); ctx.globalAlpha = clamp(1 - (sunElev / 0.1), 0, 1); for (const s of starField) p(s.x, s.y, `rgba(255,255,255,${s.a})`); ctx.globalAlpha = 1; }
+
+  // ENHANCEMENT: Background rendering with atmospheric perspective and cloud reflections
+  function drawBackground() {
+    const gameTime = (gameClock % DAYLEN) / DAYLEN;
+    const treeLineY = H * 0.45; 
+    
+    // Sky Gradient
+    const sky = getGradientColor(gameTime, skyStops);
+    const g = ctx.createLinearGradient(0,0,0,H);
+    g.addColorStop(0, sky);
+    // A darker, desaturated blue/indigo for the lower atmosphere
+    g.addColorStop(1, '#101828');
+    ctx.fillStyle = g;
+    ctx.fillRect(0,0,W,H);
+    
+    // Sun/Moon/Stars
+    const theta = 2 * Math.PI * (gameTime - 0.25); const sunElev = Math.sin(theta); const sunX = W/2 - (W/2) * Math.cos(theta); const sunY = treeLineY - sunElev * (treeLineY);
+    if (sunElev > 0 && sunY < treeLineY) { ctx.globalAlpha = 0.9 * Math.min(1, sunElev+0.2); pixelCircle(Math.round(sunX), Math.round(sunY), 3, '#ffe6a6'); ctx.globalAlpha = 0.3; pixelCircle(Math.round(sunX), Math.round(sunY), 6, '#ffd48a'); ctx.globalAlpha = 1; }
+    const moonTheta = theta + Math.PI; const moonElev = Math.sin(moonTheta); const moonX = W/2 - (W/2) * Math.cos(moonTheta); const moonY = treeLineY - moonElev * (treeLineY);
+    if (moonElev > 0 && moonY < treeLineY) { ctx.globalAlpha = 0.8 * Math.min(1, moonElev+0.2); pixelCircle(Math.round(moonX), Math.round(moonY), 2, '#dfe7ff'); ctx.globalAlpha = 0.4; pixelCircle(Math.round(moonX), Math.round(moonY), 4, '#dfe7ff'); ctx.globalAlpha = 1; }
+    drawStars(sunElev);
+    
+    // ENHANCEMENT: Distant Tree Line (More textured silhouette)
+    // Use a very dark, slightly desaturated color fitting the atmosphere, dynamically shaded
+    const treeColor = getGradientColor(gameTime, [
+        {t: 0.0, c: [5, 5, 10]},
+        {t: 0.28, c: [15, 20, 25]}, // Slightly brighter near sunrise/set
+        {t: 0.5, c: [20, 30, 30]},
+        {t: 0.8, c: [15, 20, 25]},
+        {t: 1.0, c: [5, 5, 10]}
+    ]);
+
+    ctx.fillStyle = treeColor;
+    ctx.globalAlpha = 0.85; // Slightly opaque to stand out against the sky
+    for (let i = 0; i < W; i++) {
+        const data = treeLine[i];
+        const h = data.height;
+        // Draw the main shape (ensure it goes down to the water line)
+        r(i, treeLineY - h, 1, h + (H - treeLineY));
+
+        // Add texture/foliage silhouette using the density value (Clustering)
+        // This mimics the clustered look of distant pines
+        if (data.density > 0.6) {
+            // Add small variations near the top to break up the straight line
+            if (i > 0 && i < W-1) {
+                p(i-1, treeLineY - h + 2, treeColor);
+                p(i+1, treeLineY - h + 4, treeColor);
+            }
+        }
+    }
+    
+    // Draw Clouds (Sky)
+    drawClouds(false);
+    
+    ctx.globalAlpha = 1;
+    const waterY = H - (FOREGROUND_Y_OFFSET - 5);
+    const waterHeight = FOREGROUND_Y_OFFSET - 5;
+    
+    // Water Body
+    const waterColor = getGradientColor(gameTime, waterStops); r(0, waterY, W, waterHeight, waterColor);
+    
+    // ENHANCEMENT: Cloud Reflections
+    ctx.save();
+    // Create a clipping path to restrict reflections to the water area
+    ctx.beginPath();
+    ctx.rect(0, waterY, W, waterHeight);
+    ctx.clip();
+
+    // Flip vertically across the waterline (Y = waterY)
+    ctx.translate(0, waterY * 2);
+    ctx.scale(1, -1); 
+    
+    drawClouds(true); // Draw reflections (dimmer)
+    ctx.restore();
+
+    // Water Reflections (Reflecting the textured trees)
+    // The reflection color is derived from the tree color but darker and slightly bluer
+    const reflectionColor = getGradientColor(gameTime, [
+        {t: 0.0, c: [3, 3, 7]},
+        {t: 0.28, c: [10, 15, 20]},
+        {t: 0.5, c: [15, 25, 25]},
+        {t: 1.0, c: [3, 3, 7]}
+    ]);
+    ctx.fillStyle = reflectionColor;
+    ctx.globalAlpha = 0.5; // Subtle reflections
+    for (let i = 0; i < W; i++) {
+        // Calculate reflection based on the distant treeline height
+        const reflectionHeight = treeLine[i].height * 0.9;
+        
+        // Add subtle vertical distortion (ripple effect)
+        const distortionY = Math.sin(gameClock*0.05 + i*0.1) * 0.6;
+        // Start reflection slightly below the visual waterline
+        r(i, waterY + 1, 1, reflectionHeight + distortionY);
+    }
+    ctx.globalAlpha = 1;
+
+    // Water Highlights (Drawn on top of reflections)
+    const waterHighlight = `rgba(255, 255, 230, 0.12)`; // Slightly warmer highlight
+    for (let i=0; i < waterHeight; i+=2) {
+        const yy = waterY + i;
+        for (let x=0; x<W; x+=RI(10,20)) {
+            r(x + Math.sin((gameClock*0.06 + i)*0.5)*3.5 + weather.windX * 1.5, yy, RI(3,6), 1, waterHighlight);
+        }
+    }
+  }
+
+  // Renamed parameter from 'p' to 'powerup'.
+  function drawPowerup(powerup) {
+    const x = Math.round(powerup.x), y = Math.round(powerup.y);
+    ctx.save();
+    ctx.translate(x, y);
+    const bob = Math.sin(gameClock * 0.05) * 2;
+    ctx.translate(0, bob);
+    ctx.scale(SPRITE_SCALE * 0.8, SPRITE_SCALE * 0.8);
+
+    const chuteColor = '#f0f0f0';
+    const chuteDark = '#b0b0b0';
+    r(-6, -9, 12, 2, chuteDark);
+    r(-5, -7, 10, 3, chuteColor);
+    
+    const stringColor = '#888';
+    l(-5, -7, -2, -2, stringColor);
+    l(4, -7, 1, -2, stringColor);
+    l(0, -7, 0, -2, stringColor);
+
+    // Crate colors matching the environment (Earthy browns)
+    const crateColor = '#6d4c3b';
+    const crateDark = '#4e342e';
+    r(-3, -2, 6, 6, crateColor);
+    r(-3, -1, 6, 1, crateDark);
+    r(-3, 2, 6, 1, crateDark);
+    r(-1, -2, 2, 6, crateDark);
+    // Ammo symbol (+)
+    p(0, 0, '#ffd54f'); p(0, 1, '#ffd54f'); p(-1, 0, '#ffd54f'); p(1, 0, '#ffd54f');
+
+    ctx.restore();
+  }
+
+  // Drawing function for clay pigeons
+  function drawClay(c) {
+    const x = Math.round(c.x), y = Math.round(c.y);
+    const clayColor = '#ff6347'; // Bright orange
+    const clayDark = '#c82828';
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(c.rotation);
+    ctx.scale(SPRITE_SCALE * 0.7, SPRITE_SCALE * 0.7);
+
+    if (c.vy < 0) { // Going up
+        r(-4, -1, 8, 2, clayColor);
+        r(-3, -1, 6, 1, clayDark);
+    } else { // Coming down
+        r(-4, -1, 8, 2, clayDark);
+        r(-3, 0, 6, 1, clayColor);
+    }
+    
+    ctx.restore();
+  }
+
+  // ENHANCEMENT: Complete overhaul of duck sprites for a detailed, naturalistic look
+  function drawDuck(d) {
+    const x = Math.round(d.x), y = Math.round(d.y); const right = d.vx > 0;
+    ctx.save();
+    ctx.translate(x, y);
+
+    const HIT_STUN_TIME = 0.8; // Duration for the stun sprite
+
+    if (!d.alive && d.hit) {
+        if (d.fall < HIT_STUN_TIME) {
+            // Draw the "HIT STUN" sprite
+            ctx.scale(SPRITE_SCALE, SPRITE_SCALE);
+            
+            let stunColor, billColor = '#cca23a', eyeColor = '#FFF';
+
+            if (d.type === 'golden') {
+                stunColor = '#ffd700';
+                billColor = '#ffa500';
+            } else if (d.type === 'fast') { // Teal
+                stunColor = '#795548';
+                billColor = '#616161';
+            } else if (d.type === 'goose') { // Goose
+                stunColor = '#5d4037';
+                billColor = '#333';
+            } else { // Mallard
+                stunColor = '#6d4c3b';
+                billColor = '#ffd54f';
+            }
+
+            // Generic stun shape
+            r(-3, -3, 6, 6, stunColor);
+            // Eyes popping out
+            p(-2, -2, eyeColor); p(1, -2, eyeColor); 
+            // Open beak
+            r(-1, 1, 2, 2, billColor);
+
+            ctx.restore();
+            return; // Skip the rest of the drawing logic during hit stun
+        }
+
+        // Proceed with falling animation after hit stun
+        const fallRotation = Math.sin(d.fall * 0.5) * (right ? 1 : -1);
+        ctx.rotate(fallRotation);
+    }
+
+
+    if (!right) ctx.scale(-1, 1);
+    ctx.scale(SPRITE_SCALE, SPRITE_SCALE);
+
+    // --- GOLDEN DUCK ---
+    if (d.type === 'golden') {
+      const shimmer = Math.sin(gameClock * 0.2) * 0.5 + 0.5;
+      const gold1 = `rgb(255, ${215 + shimmer*40}, 0)`;
+      const gold2 = `rgb(218, ${165 + shimmer*30}, 32)`;
+      const billC = '#ffa500';
+
+      r(-4, 0, 8, 4, gold1); r(-3, 1, 6, 3, gold2);
+      r(3, -3, 3, 3, gold1); p(5, -2, '#fff'); r(6, -2, 2, 1, billC);
+
+      const flapFrame = Math.floor(d.flap / 3); ctx.fillStyle = gold2;
+      if (d.alive) {
+        switch(flapFrame) { case 0: r(-2, -3, 5, 2); r(-1, -2, 4, 2); break; case 1: r(-3, 0, 6, 2); r(-2, 1, 5, 2); break; case 2: r(-2, 2, 5, 2); r(-1, 3, 4, 2); break; }
+      }
+    }
+    // --- GOOSE (Canada Goose Inspired) ---
+    else if (d.type === 'goose') {
+      const bodyBase = '#5d4037';
+      const bodyLight = '#8d6e63';
+      const neckBlack = '#212121';
+      const cheekWhite = '#f5f5f5';
+      const billBlack = '#333';
+
+      // Body (Larger proportions)
+      r(-8, 0, 14, 6, bodyBase);
+      r(-6, 1, 10, 5, bodyLight);
+      r(-8, 0, 3, 3, neckBlack); // Tail feathers
+
+      // Neck and Head
+      r(3, -7, 3, 7, neckBlack);
+      r(5, -8, 4, 4, neckBlack);
+
+      // Cheek Patch
+      r(6, -6, 2, 2, cheekWhite);
+
+      // Bill
+      r(9, -7, 2, 1, billBlack);
+      
+      const wing_dark = '#4e342e';
+      const wing_light = '#795548';
+      const flapFrame = Math.floor(d.flap / 3);
+
+      if (d.alive) {
+        // Larger wingspan animation
+        switch (flapFrame) {
+            case 0: // Up
+                ctx.fillStyle = wing_dark; r(-8, -6, 12, 4); p(4, -4, wing_dark);
+                ctx.fillStyle = wing_light; r(-7, -6, 10, 2);
+                break;
+            case 1: // Mid
+                ctx.fillStyle = wing_dark; r(-10, -1, 16, 3);
+                ctx.fillStyle = wing_light; r(-9, -1, 14, 1);
+                break;
+            case 2: // Down
+                ctx.fillStyle = wing_dark; r(-8, 3, 12, 4); p(4, 5, wing_dark);
+                ctx.fillStyle = wing_light; r(-7, 3, 10, 2);
+                break;
+            case 3: // Glide
+                ctx.fillStyle = wing_dark; r(-10, 0, 16, 2);
+                ctx.fillStyle = wing_light; r(-9, 0, 14, 1);
+                break;
+        }
+      }
+    } 
+    // --- FAST DUCK (Green-winged Teal Inspired) ---
+    else if (d.type === 'fast') {
+        const headC = '#795548'; // Chestnut brown
+        const eyePatch = '#1b5e20'; // Green patch
+        const bodyC = '#bdbdbd'; // Grayish body
+        const billC = '#616161';
+        const wingC = '#9e9e9e';
+
+        // Smaller body (Teal are small ducks)
+        r(-4, 0, 7, 3, bodyC);
+
+        // Head
+        r(2, -3, 3, 3, headC);
+        r(1, -2, 2, 2, eyePatch); // Green patch behind eye
+
+        // Bill
+        r(5, -2, 2, 1, billC);
+
+        // Fast flapping animation
+        const flap = Math.floor(d.flap / 2) % 3;
+        ctx.fillStyle = wingC;
+        if (d.alive) {
+            if (flap === 0) { r(-3, -2, 5, 1); r(-2, -1, 4, 1); }
+            else if (flap === 1) { r(-4, 0, 6, 1); }
+            else { r(-3, 1, 5, 1); r(-2, 2, 4, 1); }
+        }
+    } 
+    // --- NORMAL DUCK (Mallard Inspired, Atmospheric Palette) ---
+    else {
+      // Hue-Shifted Palette
+      const headC = '#1b5e20';       // Dark, cool green
+      const headH = '#4c8c4a';       // Highlight (iridescence)
+      const bodyC1 = '#6d4c3b';      // Warm brown (Base)
+      const bodyC2 = '#a1887f';      // Lighter brown (Belly)
+      const wingSpeculum = '#3949ab';// Blue wing patch
+      const wingC = '#5d4037';       // Darker wing feathers
+      const billC = '#ffd54f';       // Warm yellow bill
+      const ringC = '#f5f5f5';       // White neck ring
+      const eyeC = '#111';
+
+      // Body (Detailed shape)
+      r(-6, 0, 11, 5, bodyC1);
+      r(-4, 1, 8, 4, bodyC2);  // Belly
+      r(3, 0, 2, 3, bodyC1);   // Chest definition
+
+      // Wing detail (Speculum)
+      r(-3, 1, 3, 2, wingSpeculum);
+      p(-3, 0, ringC); p(-1, 0, ringC); // White borders for speculum
+
+      // Neck Ring
+      r(4, -1, 2, 1, ringC);
+
+      // Head
+      r(4, -5, 4, 4, headC);
+      r(5, -5, 3, 3, headC);
+
+      // Head Highlight
+      p(5, -5, headH);
+      p(6, -4, headH);
+
+      // Eye and Bill
+      p(6, -4, eyeC);
+      r(8, -4, 3, 1, billC);
+      p(10, -4, '#c6a73b'); // Bill tip dark
+
+      // Wing animation
+      const flapFrame = Math.floor(d.flap / 3);
+      if (d.alive) {
+        ctx.fillStyle = wingC;
+        switch(flapFrame) {
+            case 0: // Up
+                r(-5, -4, 6, 3); r(-4, -3, 5, 3);
+                ctx.fillStyle = bodyC2; r(-4, -4, 4, 1); // Lighter underside
+                break;
+            case 1: // Middle
+                r(-7, 0, 8, 3); r(-6, 1, 7, 3);
+                break;
+            case 2: // Down
+                r(-5, 2, 6, 3); r(-4, 3, 5, 3);
+                ctx.fillStyle = bodyC2; r(-4, 2, 4, 1);
+                break;
+        }
+      }
+    }
+    ctx.restore();
+  }
+  
+  function updateHUD() {
+    const ducksEl = document.getElementById('ducksDisplay');
+    const levelEl = document.getElementById('levelDisplay');
+    
+    if (isBonusRound) {
+        ducksEl.textContent = `Clays: ${claysHit}/${claysToLaunch}`;
+        levelEl.textContent = `BONUS`;
+    } else {
+        ducksEl.textContent = `Ducks: ${ducksShot}/${ducksToShoot}`;
+        levelEl.textContent = `Level: ${level}`;
+    }
+
+    document.getElementById('scoreDisplay').textContent = `Score: ${score}`;
+    document.getElementById('highScoreDisplay').textContent = `High Score: ${highScore}`;
+    const ammoEl = document.getElementById('ammoDisplay'); ammoEl.textContent = `Ammo: ${ammo}`; ammoEl.style.color = ammo <= 2 ? '#ffb3b3' : '#e6e6e6';
+  }
+  
+  function update(timestamp) {
+    try {
+      // Ensure context smoothing is disabled (important for procedural pixel art)
+      ctx.imageSmoothingEnabled = false;
+      ctx.mozImageSmoothingEnabled = false;
+      ctx.webkitImageSmoothingEnabled = false;
+      ctx.msImageSmoothingEnabled = false;
+
+      if (gameOver || !gameStarted) {
+        requestAnimationFrame(update);
+        return;
+      }
+
+      if (!lastTime) lastTime = timestamp;
+      const deltaTime = (timestamp - lastTime) / (1000 / 60);
+      lastTime = timestamp;
+      const dt = Math.min(deltaTime, 3); 
+      
+      gameClock += dt;
+      
+      hunter.y = H - FOREGROUND_Y_OFFSET;
+
+      // Update Dogs (Adjust boundaries for new SPRITE_SCALE)
+      if (dogs && Array.isArray(dogs)) { for (let i = dogs.length - 1; i >= 0; i--) { const dog = dogs[i]; dog.frame += dt; if (dog.state === 'carrying') { dog.x += dog.vx * dt; if ((dog.vx > 0 && dog.x > W + 30 * SPRITE_SCALE) || (dog.vx < 0 && dog.x < -30 * SPRITE_SCALE)) dogs.splice(i, 1); } } }
+      
+      // --- Game Logic ---
+      if (isBonusRound) {
+        // Bonus round ends when all clays are launched and off-screen
+        if (claysLaunched >= claysToLaunch && clays.length === 0 && pellets.length === 0) {
+            endBonusRound();
+        }
+      } else {
+        // Normal level win/loss conditions
+        if (ducksShot >= ducksToShoot && !levelTransitioning) {
+          startNextLevel();
+        }
+
+        if (ammo <= 0 && ducksShot < ducksToShoot && pellets.length === 0 && ducks.filter(d => d.alive).length === 0 && !duckRush) {
+          endGame();
+          return;
+        }
+      }
+
+      // Update weather (Unchanged)
+      weather.windChangeTimer -= dt;
+      if (weather.windChangeTimer <= 0) {
+        weather.windTarget = (R(1) - 0.5) * 2.0;
+        weather.windChangeTimer = RI(300, 900);
+      }
+      weather.windX += (weather.windTarget - weather.windX) * 0.01 * dt;
+
+      if (windGainNode && audioContext && audioContext.state === 'running') {
+        const targetVolume = Math.min(0.4, Math.abs(weather.windX) * 0.2);
+        setAudioParam(windGainNode.gain, targetVolume, audioContext.currentTime + 0.5, 'linear');
+      }
+
+      if (!weather.raining && Math.random() < 0.0006) { weather.raining = true; weather.until = gameClock + RI(500, 1000); }
+      if (weather.raining && gameClock > weather.until) { 
+          weather.raining = false; 
+          if (rainGainNode && audioContext && audioContext.state === 'running') { 
+            const now = audioContext.currentTime; 
+            setAudioParam(rainGainNode.gain, rainGainNode.gain.value, now, 'set');
+            setAudioParam(rainGainNode.gain, 0.0001, now + 1.5, 'linear');
+          } 
+       }
+      if (weather.raining && rainGainNode && rainGainNode.gain.value < 0.1) { 
+          if (audioContext && audioContext.state === 'running') {
+             setAudioParam(rainGainNode.gain, 0.3, audioContext.currentTime + 0.8, 'linear');
+          }
+      }
+
+      // Update clouds
+      for (let i = clouds.length - 1; i >= 0; i--) {
+        const c = clouds[i];
+        c.x += (c.vx + weather.windX * 0.3) * dt;
+        c.life -= dt;
+        if (c.x < -60 || c.x > W + 60 || c.life <= 0) clouds.splice(i, 1);
+      }
+      cloudSpawnTimer -= dt;
+      if (cloudSpawnTimer <= 0 && clouds.length < 10) { spawnCloud(); cloudSpawnTimer = RI(80, 120); }
+
+      // Update rain
+      const waterY = H - (FOREGROUND_Y_OFFSET - 5);
+      if (weather.raining) {
+          spawnRainTick();
+          for (let i=raindrops.length-1; i>=0; i--) {
+              const d = raindrops[i]; d.x += d.vx * dt; d.y += d.vy * dt;
+              if (d.y >= waterY) { makeSplash(d.x, waterY-1); ripples.push({ x: d.x, y: waterY, r: 1, life: 40 }); raindrops.splice(i,1); } 
+              else if (d.x < -15 || d.x > W+15 || d.y > H+5) { raindrops.splice(i,1); }
+          }
+      }
+
+      // --- Spawning ---
+      if (isBonusRound) {
+        if (gameClock >= nextClayAt && claysLaunched < claysToLaunch) {
+            spawnClay();
+            nextClayAt = gameClock + RI(60, 100); // Faster spawn for clays
+        }
+      } else {
+        if (!duckRush && !levelTransitioning && ammo > 0 && Math.random() < currentParams.rushProb) {
+          startDuckRush();
+        }
+        if (duckRush) {
+          if (gameClock >= nextSpawnAt) {
+            spawnDuck();
+            nextSpawnAt = gameClock + 8;
+          }
+        } else if (gameClock >= nextSpawnAt && !levelTransitioning) {
+          if (ammo > 0) {
+            spawnDuck();
+            const jitter = RI(-6, 6);
+            nextSpawnAt = gameClock + Math.max(16, currentParams.spawnInterval + jitter);
+          }
+        }
+        if (gameClock >= nextPowerupSpawn && !levelTransitioning && ammo > 0) {
+          spawnPowerup();
+          nextPowerupSpawn = gameClock + POWERUP_SPAWN_INTERVAL + R(POWERUP_SPAWN_INTERVAL/2);
+        }
+      }
+
+      // --- DRAWING STARTS HERE ---
+      drawBackground();
+      if (weather.raining) drawRain();
+
+      // Update and draw powerups
+      for (let i = powerups.length - 1; i >= 0; i--) {
+        const p = powerups[i];
+        p.x += (p.vx + weather.windX * 0.2) * dt;
+        p.y += p.vy * dt;
+        p.life -= dt;
+        if (p.x < -40 || p.x > W+40 || p.life <= 0 || p.y > waterY) {
+            if (p.y > waterY) makeSplash(p.x, waterY-1);
+            powerups.splice(i, 1);
+            continue;
+        }
+        drawPowerup(p);
+      }
+
+      // Update and draw ducks
+      for (let i=ducks.length-1; i>=0; i--) {
+        const d = ducks[i];
+        if (d.alive) { 
+          const speedMul = d.type === 'fast' ? currentParams.speedFast : (d.type === 'goose' ? currentParams.speedGoose : currentParams.speedNormal); 
+          let zig = 0; 
+          if (d.type === 'fast' || d.type === 'golden') zig = Math.sin(gameClock * (d.zigF||0.32) + (d.zigPhase||0)) * (d.zigA||1.0); 
+          else if (d.type === 'goose') zig = Math.sin(gameClock * (d.zigF||0.12) + (d.zigPhase||0)) * (d.zigA||0.3); 
+          else zig = Math.sin(gameClock*0.06 + i)*0.12;
+          d.x += (d.vx * speedMul + weather.windX * 0.15) * dt; 
+          d.y += (d.vy * speedMul + zig) * dt; 
+          d.flap = (d.flap + dt) % 12; 
+          // Increased boundary check slightly for larger sprites (Goose)
+          if (d.x < -30 || d.x > W+30 || d.y < -30) { ducks.splice(i,1); continue; } 
+        } else { 
+          d.fall += 0.1 * dt; 
+          // Pause physics during Hit Stun
+          if (d.fall > 0.8) { // HIT_STUN_TIME
+             d.y += d.fall * dt;
+             d.x += (d.vx * 0.45 + weather.windX * 0.5) * dt; 
+          }
+          if (d.y > H - (FOREGROUND_Y_OFFSET - 3) && !d.retrieved) { makeSplash(d.x, H - (FOREGROUND_Y_OFFSET - 3)); spawnDog(d.x, d.type); d.retrieved = true; } 
+          if (d.y > H + 50) { ducks.splice(i, 1); continue; } 
+        }
+        drawDuck(d);
+      }
+      
+      // Update and draw clays
+      for (let i = clays.length - 1; i >= 0; i--) {
+          const c = clays[i];
+          if (c.alive) {
+              c.x += (c.vx + weather.windX * 0.4) * dt;
+              c.y += c.vy * dt;
+              c.vy += 0.15 * dt; // Gravity
+              c.rotation += c.rotSpeed * dt;
+              if (c.y > H + 20) {
+                  clays.splice(i, 1);
+              } else {
+                  drawClay(c);
+              }
+          }
+      }
+
+      // Update and draw pellets
+      for (let i=pellets.length-1; i>=0; i--) {
+        const s = pellets[i]; s.x += s.vx * dt; s.y += s.vy * dt; s.life -= dt; 
+        if (s.life > 0) p(s.x, s.y, '#fffbd1'); 
+        if (s.life <= 0 || s.x<0||s.x>W||s.y<0||s.y>H) { pellets.splice(i,1); continue; }
+        let hit = false;
+
+        if (isBonusRound) {
+            // Check collision with clays
+            for (let j = clays.length - 1; j >= 0; j--) {
+                const c = clays[j];
+                if (!c.alive) continue;
+                const dx = s.x - c.x, dy = s.y - c.y;
+                if (dx*dx + dy*dy < HIT_R2 * 1.5) { // Slightly larger hitbox
+                    c.alive = false;
+                    claysHit++;
+                    score += 25;
+                    floatText(c.x, c.y, '+25', '#ffaf47');
+                    playClayShatterSound();
+                    createParticles(c.x, c.y, 20, '#ff6347', 50, 2.0, 0.06); // Shatter effect
+                    clays.splice(j, 1);
+                    pellets.splice(i, 1);
+                    hit = true;
+                    break;
+                }
+            }
+        } else {
+            // Check collision with ducks
+            for (let j=0;j<ducks.length;j++) { 
+              const d = ducks[j]; if (!d.alive) continue; 
+              const dx = s.x - d.x, dy = s.y - d.y; 
+              // Hitbox check
+              if (dx*dx + dy*dy < HIT_R2) { 
+                d.alive = false; d.hit = true; 
+
+                let points = 0;
+                let color = '#fff';
+
+                // ENHANCEMENT: Changed 'fast' (Teal) from penalty to reward
+                if (d.type === 'fast') { 
+                    points = 15; score += points; ducksShot += 1; playDuckHitSound(); color = '#aed581';
+                } 
+                else if (d.type === 'goose') { 
+                    points = 20; score += points; ducksShot += 2; playDuckHitSound(); color = '#ffd700';
+                } 
+                else if (d.type === 'golden') {
+                    points = 100; score += points; ammo += 1; ducksShot += 1; playGoldenHitSound(); color = '#ffd700';
+                    floatText(d.x, d.y-20, "+1 Ammo", '#7CFC00');
+                }
+                else { // Mallard
+                    points = 10; score += points; ducksShot++; playDuckHitSound(); 
+                } 
+                
+                floatText(d.x, d.y, (points > 0 ? '+' : '') + points, color);
+                featherBurst(d.x, d.y, d.type);
+                pellets.splice(i,1); hit = true; break; 
+              } 
+            }
+        }
+        if (hit) continue;
+
+        // Check collision with powerups
+        for (let j=0; j < powerups.length; j++) {
+            const p = powerups[j];
+            const dx = s.x - p.x, dy = s.y - p.y;
+            if (dx*dx + dy*dy < HIT_R2 * 2) {
+                if (p.type === 'ammo') {
+                    const ammoGained = RI(3, 5);
+                    ammo += ammoGained;
+                    floatText(p.x, p.y, `+${ammoGained} Ammo`, '#7CFC00');
+                    playPickupSound();
+                    // Particle colors matching new crate
+                    createParticles(p.x, p.y, 15, '#6d4c3b', 40, 1.5, 0.05);
+                }
+                powerups.splice(j, 1);
+                pellets.splice(i, 1);
+                hit = true;
+                break;
+            }
+        }
+        if (hit) continue;
+      }
+
+      // Update and draw particles
+      for (let i=splashes.length-1;i>=0;i--) { const sp = splashes[i]; sp.x += (sp.vx + weather.windX * 0.4) * dt; sp.y += sp.vy * dt; sp.vy += 0.05 * dt; sp.life -= dt; if (sp.life > 0) p(sp.x, sp.y, sp.color); if (sp.life<=0) splashes.splice(i,1); }
+      
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const pf = particles[i];
+        pf.x += (pf.vx + weather.windX * 0.3) * dt;
+        pf.y += pf.vy * dt;
+        if (pf.gravity) {
+            pf.vy += pf.gravity * dt;
+            pf.vx *= (1 - 0.015 * dt);
+        }
+        pf.life -= dt;
+        if (pf.life > 0) p(pf.x, pf.y, pf.color);
+        if (pf.life <= 0) particles.splice(i, 1);
+      }
+      
+      // Update ripples
+      const rippleColor = '#CFD8DC';
+      for (let i = ripples.length - 1; i >= 0; i--) {
+          const ripple = ripples[i]; ripple.r += 0.5 * dt; ripple.life -= dt; 
+          ripple.x += weather.windX * 0.2 * dt;
+          if (ripple.life > 0) {
+            ctx.beginPath(); ctx.ellipse(ripple.x, ripple.y, ripple.r, ripple.r * 0.4, 0, 0, 2 * Math.PI); ctx.globalAlpha = clamp(ripple.life / 40, 0, 1) * 0.6;
+            ctx.strokeStyle = rippleColor;
+            ctx.lineWidth = 1; ctx.stroke();
+          }
+          if (ripple.life <= 0) { ripples.splice(i, 1); }
+      }
+      ctx.globalAlpha = 1;
+
+      if (hunter.recoil>0) hunter.recoil -= dt; if (hunter.muzzleFlash>0) hunter.muzzleFlash -= dt;
+      // Draw foreground elements
+      drawReeds(); drawHunter(); drawDogs();
+
+      // Draw floating texts
+      for (let i = floatingTexts.length - 1; i >= 0; i--) {
+        const ft = floatingTexts[i];
+        ft.y += ft.vy * dt;
+        ft.life -= dt;
+        
+        ctx.save();
+        ctx.font = '20px "VT323"';
+        ctx.textAlign = 'center';
+        ctx.globalAlpha = clamp(ft.life / 20, 0, 1);
+        
+        // Outline for readability
+        ctx.fillStyle = '#000';
+        ctx.fillText(ft.text, ft.x + 1, ft.y + 1);
+        
+        ctx.fillStyle = ft.color;
+        ctx.fillText(ft.text, ft.x, ft.y);
+        
+        ctx.restore();
+        ctx.globalAlpha = 1;
+        if (ft.life <= 0) floatingTexts.splice(i, 1);
+      }
+
+      updateHUD();
+
+      // Scanlines effect (Subtle CRT look)
+      ctx.globalAlpha = .07; for (let y=0;y<H;y+=2) r(0,y,W,1,'#000'); ctx.globalAlpha = 1;
+      
+      requestAnimationFrame(update);
+    } catch (e) {
+      console.error("An error occurred in the game loop:", e);
+      endGame(true);
+    }
+  }
+
+  // (Input Handling and Game State Management remain unchanged)
+  function canvasPos(e){ 
+    const rect = canvas.getBoundingClientRect(); 
+    const sx = W / rect.width; 
+    const sy = H / rect.height; 
+    return { 
+      x: (e.clientX - rect.left) * sx, 
+      y: (e.clientY - rect.top) * sy 
+    }; 
+  }
+  
+  canvas.addEventListener('mousemove', e => { const m = canvasPos(e); mouse.x = m.x; mouse.y = m.y; });
+  canvas.addEventListener('mousedown', e => { mouse.down = true; const m = canvasPos(e); shoot(m.x, m.y); });
+  canvas.addEventListener('mouseup', () => mouse.down = false);
+  canvas.addEventListener('touchstart', e => { const t = e.changedTouches[0]; const m = canvasPos(t); mouse.x = m.x; mouse.y = m.y; shoot(m.x, m.y); e.preventDefault(); }, {passive:false});
+  canvas.addEventListener('touchmove', e => { const t = e.changedTouches[0]; const m = canvasPos(t); mouse.x = m.x; mouse.y = m.y; e.preventDefault(); }, {passive:false});
+
+  document.getElementById('restartOverlayButton').onclick = () => restart();
+  
+  function endGame(error = false) {
+    gameOver = true;
+    
+    let newHighScore = false;
+    if (score > highScore) {
+        highScore = score;
+        // PWA: Store high score in localStorage
+        localStorage.setItem('WaterfowlingReduxHighScore', highScore);
+        newHighScore = true;
+    }
+
+    hud.style.display = 'none';
+    gameOverOverlay.style.display = 'grid';
+
+    if (error) {
+        finalScoreDisplay.innerHTML = `An error occurred.<br>Please restart.`;
+    } else {
+        let scoreText = `Score: ${score}`;
+        if (newHighScore) {
+            scoreText += `<br><span style="font-size: 0.7em; color: #ffd700;">NEW HIGH SCORE!</span>`;
+        } else {
+            scoreText += `<br><span style="font-size: 0.6em;">High Score: ${highScore}</span>`;
+        }
+        finalScoreDisplay.innerHTML = scoreText;
+        playGameOverJingle();
+    }
+  }
+
+  function restart(){
+    gameOver = false;
+    hud.style.display = 'flex';
+    gameOverOverlay.style.display = 'none'; 
+    levelCompleteOverlay.style.display = 'none';
+    score = 0; level = 0;
+    ducks = []; pellets = []; splashes = []; particles = []; ripples = []; clouds = []; raindrops = []; dogs = []; powerups = []; floatingTexts = [];
+    gameClock = 0; lastTime = 0;
+    weather = {raining:false, until:0, windX: 0, windTarget: 0, windChangeTimer: 0};
+    starField = null;
+    levelTransitioning = false;
+    duckRush = false;
+    isBonusRound = false;
+    clays = [];
+    if (audioContext) {
+        if (rainGainNode) setAudioParam(rainGainNode.gain, 0, audioContext.currentTime, 'set');
+        if (windGainNode) setAudioParam(windGainNode.gain, 0, audioContext.currentTime, 'set');
+    }
+    // PWA: Retrieve high score from localStorage
+    highScore = parseInt(localStorage.getItem('WaterfowlingReduxHighScore')) || 0;
+    generateTreeLine(); 
+    generateReeds(); 
+    startNextLevel();
+  }
+
+  function startBonusRound() {
+    isBonusRound = true;
+    levelTransitioning = true;
+    
+    claysLaunched = 0;
+    claysHit = 0;
+    claysToLaunch = 10 + Math.floor(level / 2);
+    ammo += Math.ceil(claysToLaunch * 1.5); // Give plenty of ammo
+    shotsFired = 0;
+    clays = [];
+    ducks = []; // Clear any existing ducks
+    
+    playLevelCompleteJingle();
+    hud.style.display = 'none';
+    levelCompleteOverlay.style.display = 'grid';
+    nextLevelMessage.innerHTML = `BONUS ROUND!`;
+    
+    setTimeout(() => {
+        hud.style.display = 'flex';
+        levelCompleteOverlay.style.display = 'none';
+        levelTransitioning = false;
+        nextClayAt = gameClock + 60;
+    }, 3000);
+  }
+
+  function endBonusRound() {
+    isBonusRound = false;
+    levelTransitioning = true;
+    
+    const bonusPoints = claysHit * 50; // Extra bonus for completion
+    score += bonusPoints;
+    
+    playLevelCompleteJingle();
+    hud.style.display = 'none';
+    levelCompleteOverlay.style.display = 'grid';
+    let bonusMessage = `Bonus Complete!`;
+    if (bonusPoints > 0) {
+        bonusMessage += `<br><span style="font-size: 0.6em;">+${bonusPoints} Completion Bonus!</span>`;
+        floatText(W/2, H/2, `+${bonusPoints} BONUS`, '#ffd700', 120);
+    }
+    nextLevelMessage.innerHTML = bonusMessage;
+    
+    setTimeout(() => {
+        startNextLevel(true); // Force starting a normal level
+    }, 3000);
+  }
+
+  function startNextLevel(forceNormalLevel = false) {
+    // Decide if it's time for a bonus round
+    if (!forceNormalLevel && level > 1 && level % 3 === 0) {
+        startBonusRound();
+        return;
+    }
+
+    const effectiveDucksShot = Math.min(ducksShot, ducksToShoot);
+    // Calculate accuracy based on hits vs shots fired
+    const acc = (shotsFired > 0) ? (effectiveDucksShot / shotsFired) : null; 
+    prevAccuracy = acc; 
+    
+    level++; 
+    
+    ducksShot = 0; 
+    shotsFired = 0;
+    
+    currentParams = getLevelParams(level, acc); 
+    MAX_DUCKS_ON_SCREEN = currentParams.maxOnScreen;
+    ducksToShoot = currentParams.ducksNeeded; 
+    ammo = ducksToShoot + currentParams.ammoBuffer; 
+    ducks = [];
+    powerups = [];
+    nextSpawnAt = gameClock + 120;
+    nextPowerupSpawn = gameClock + POWERUP_SPAWN_INTERVAL/2 + R(POWERUP_SPAWN_INTERVAL/2);
+    
+    if (level > 1) {
+        levelTransitioning = true;
+        playLevelCompleteJingle();
+        hud.style.display = 'none';
+        levelCompleteOverlay.style.display = 'grid';
+        const accuracyText = acc !== null ? `Accuracy: ${(acc * 100).toFixed(0)}%` : '';
+        nextLevelMessage.innerHTML = `Level ${level}<br><span style="font-size: 0.6em;">${accuracyText}</span>`;
+        
+        setTimeout(() => {
+            hud.style.display = 'flex';
+            levelCompleteOverlay.style.display = 'none';
+            levelTransitioning = false;
+        }, 3000);
+    } else {
+        requestAnimationFrame(update);
+    }
+  }
+
+  function startGame(e) {
+    if (e) {
+        // Allow starting with Space or Enter, not just any key
+        if (e.type === 'keydown' && e.code !== 'Space' && e.code !== 'Enter') return;
+        e.preventDefault();
+        e.stopPropagation();
+    }
+    userGestureAudioUnlock();
+    introOverlay.style.display = 'none';
+    hud.style.display = 'flex';
+    gameStarted = true;
+    restart();
+  }
+
+  function fit() {
+    const aspectRatio = NATIVE_W / NATIVE_H;
+    let newWidth = window.innerWidth;
+    let newHeight = window.innerHeight;
+    const windowRatio = newWidth / newHeight;
+
+    if (windowRatio > aspectRatio) {
+        newWidth = newHeight * aspectRatio;
+    } else {
+        newHeight = newWidth / aspectRatio;
+    }
+
+    // Apply the size to the canvas style (how it appears on screen)
+    canvas.style.width = newWidth + 'px';
+    canvas.style.height = newHeight + 'px';
+    
+    // Keep the internal canvas resolution fixed
+    canvas.width = NATIVE_W;
+    canvas.height = NATIVE_H;
+
+    W = NATIVE_W;
+    H = NATIVE_H;
+    
+    // Recenter hunter
+    hunter.x = W/2 - 12;
+    hunter.y = H - FOREGROUND_Y_OFFSET;
+  }
+
+  function init() {
+    // PWA: Retrieve high score from localStorage
+    highScore = parseInt(localStorage.getItem('WaterfowlingReduxHighScore')) || 0;
+
+    hud.style.display = 'none';
+    introText1.textContent = 'Rose & Scroll presents';
+    introText2.innerHTML = `<div class="text-lg mt-2">High Score: ${highScore}</div>`;
+    setTimeout(() => {
+        introText1.textContent = 'Waterfowling Redux';
+        introText2.innerHTML = '<div class="mt-8 text-2xl opacity-80 animate-pulse">Tap or Press Space to Start</div>';
+        introOverlay.addEventListener('click', startGame, { once: true });
+        window.addEventListener('keydown', startGame, { once: true });
+    }, 2500);
+  }
+
+  window.addEventListener('resize', fit);
+  fit();
+  init();
+})();
+/* --- END MAIN GAME SCRIPT --- */
+</script>
+
+<!-- PWA Service Worker Registration -->
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      // Register the service worker (Make sure sw.js exists!)
+      navigator.serviceWorker.register('./sw.js')
+        .then(registration => {
+          console.log('ServiceWorker registration successful:', registration.scope);
+        })
+        .catch(error => {
+          console.log('ServiceWorker registration failed:', error);
+        });
+    });
+  }
+</script>
+</body>
+</html>
