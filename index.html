@@ -199,8 +199,7 @@
   const HIT_R2 = 144;
   const SPRITE_SCALE = 3; 
   const FOREGROUND_Y_OFFSET = 170;
-  // CORRECTION: Define the waterline precisely. This is the axis for reflections and terrain placement.
-  // We calculate this based on H, which might change on resize, so it's defined in fit() and used globally.
+  // The axis for reflections and terrain placement.
   let WATER_Y = H - (FOREGROUND_Y_OFFSET - 5); 
 
   const POWERUP_SPAWN_INTERVAL = 60 * 40;
@@ -357,7 +356,12 @@
   let clouds = [], raindrops = [];
   let powerups = [];
   let floatingTexts = [];
-  let terrain = { distantPines: [], nearPines: [], rocks: [] };
+  // ENHANCEMENT: Store heightmaps (landmass) alongside the detailed elements (trees/rocks)
+  let terrain = { 
+      distantMap: [], distantPines: [], 
+      nearMap: [], nearPines: [], 
+      rocks: [] 
+  };
   let weather = { raining: false, until: 0, windX: 0, windTarget: 0, windChangeTimer: 0 };
   let hunter = { x: W/2 - 12, y: H - FOREGROUND_Y_OFFSET, aiming: 0, recoil: 0, muzzleFlash: 0 };
   let dogs = [];
@@ -479,8 +483,8 @@
   // Pine Tree Palettes (Cool, dark greens)
   const distantPineStops = [
       {t: 0.00, c: [15, 25, 20]},
-      {t: 0.28, c: [30, 50, 40]},
-      {t: 0.50, c: [40, 65, 50]},
+      {t: 0.28, c: [35, 55, 45]},
+      {t: 0.50, c: [45, 70, 55]},
       {t: 1.00, c: [15, 25, 20]}
   ];
   const nearPineBaseStops = [
@@ -506,11 +510,10 @@
   ];
 
   
-  // ENHANCEMENT: Generate detailed, textured terrain (Pines and Rocks)
+  // ENHANCEMENT: Generate detailed terrain, storing both heightmaps and details
   function generateTerrain() {
-    terrain.distantPines = [];
-    terrain.nearPines = [];
-    terrain.rocks = [];
+    // Reset terrain data
+    terrain = { distantMap: [], distantPines: [], nearMap: [], nearPines: [], rocks: [] };
 
     // Helper to generate a noise profile (simulating terrain height)
     function generateHeightMap(amplitude, frequency, octave1, octave2) {
@@ -520,38 +523,44 @@
             y += (Math.random() - 0.5) * frequency;
             y = clamp(y, 0, amplitude);
             const noise = Math.sin(i * octave1) * (amplitude/4) + Math.sin(i * octave2) * (amplitude/6);
+            // Store height relative to the layer's baseline
             map.push(Math.max(0, y + noise));
         }
         return map;
     }
 
+    // Define Offsets (How far above WATER_Y the layer starts)
+    const DISTANT_OFFSET = 40;
+    const NEAR_OFFSET = 10;
+    const ROCK_OFFSET = 0;
+
     // Generate the underlying landmass shapes
-    // Adjusted amplitudes and frequencies for better visual layering
-    const distantMap = generateHeightMap(50, 0.5, 0.02, 0.05);
-    const nearMap = generateHeightMap(30, 0.8, 0.05, 0.1);
+    // The amplitude defines the maximum height of the terrain *above* its offset.
+    terrain.distantMap = generateHeightMap(50, 0.5, 0.02, 0.05).map(h => h + DISTANT_OFFSET);
+    terrain.nearMap = generateHeightMap(30, 0.8, 0.05, 0.1).map(h => h + NEAR_OFFSET);
     const rockMap = generateHeightMap(8, 1.5, 0.1, 0.3);
 
     // Populate layers with individual trees based on the height maps
-    function populatePines(layer, heightMap, density, heightRange, widthRange, yOffset) {
+    function populatePines(layer, heightMap, density, heightRange, widthRange) {
         for (let i = 0; i < W; i += RI(widthRange[0], widthRange[1])) {
             if (Math.random() < density) {
                 const h = RI(heightRange[0], heightRange[1]);
-                // Position the tree so its base sits roughly at the heightmap level + offset
-                const baseYOffset = heightMap[Math.min(W-1, Math.floor(i))] + yOffset;
+                // Position the tree so its base sits at the heightmap level
+                const baseYOffset = heightMap[Math.min(W-1, Math.floor(i))];
                 layer.push({ x: i, h: h, baseYOffset: baseYOffset, seed: Math.random() });
             }
         }
     }
 
-    // Distant pines: Dense, smaller, further back (yOffset)
-    populatePines(terrain.distantPines, distantMap, 0.9, [15, 35], [4, 6], 30);
-    // Near pines: Less dense, larger, closer
-    populatePines(terrain.nearPines, nearMap, 0.7, [25, 55], [6, 9], 5);
+    // Distant pines
+    populatePines(terrain.distantPines, terrain.distantMap, 0.9, [15, 35], [4, 6]);
+    // Near pines
+    populatePines(terrain.nearPines, terrain.nearMap, 0.7, [25, 55], [6, 9]);
 
     // Populate rocks
     for (let i = 0; i < W; i++) {
         // Rocks are positioned right at the waterline (offset 0)
-        terrain.rocks.push({ x: i, height: rockMap[i], density: Math.random(), baseYOffset: 0 });
+        terrain.rocks.push({ x: i, height: rockMap[i], density: Math.random(), baseYOffset: ROCK_OFFSET });
     }
   }
 
@@ -673,8 +682,8 @@
 
     const fromLeft = Math.random() < 0.5;
     const x = fromLeft ? -10 : W+10;
-    // Adjusted spawn height to stay above the terrain
-    const y = RI(H * 0.05, H * 0.30); 
+    // Adjusted spawn height
+    const y = RI(H * 0.05, H * 0.35); 
     const base = 1.0 + R(1.0);
 
     const roll = Math.random(); let type = 'normal';
@@ -875,7 +884,7 @@
     }
   }
   
-  // (dogSprites, spawnDog, drawDogs remain the same, ensuring context passing)
+  // (dogSprites, spawnDog, drawDogs remain the same)
   const dogSprites = {
     carrying: [
       (dCtx, x, y) => { const light = '#795548', mid = '#4e342e', black = '#111'; r(x+1, y+8, 10, 5, mid, dCtx); r(x+2, y+9, 8, 3, light, dCtx); r(x+9, y+7, 4, 4, mid, dCtx); r(x+10, y+8, 2, 2, light, dCtx); r(x+12, y+8, 2, 1, black, dCtx); p(x+10, y+8, black, dCtx); r(x+8, y+6, 2, 2, mid, dCtx); r(x, y+10, 2, 2, mid, dCtx); r(x+2, y+13, 2, 4, mid, dCtx); r(x+3, y+13, 1, 3, light, dCtx); r(x+8, y+13, 2, 4, mid, dCtx); r(x+9, y+13, 1, 3, light, dCtx); },
@@ -985,57 +994,32 @@
   function ensureStars(){ if (!starField) starField = Array.from({length: 80}, () => ({x: RI(0,W), y: RI(0, H * 0.5), a: Math.random()*0.8})); }
   function drawStars(sunElev, c=ctx){ if (sunElev > 0.1) { starField = null; return; } ensureStars(); c.globalAlpha = clamp(1 - (sunElev / 0.1), 0, 1); for (const s of starField) p(s.x, s.y, `rgba(255,255,255,${s.a})`, c); c.globalAlpha = 1; }
 
-  // ENHANCEMENT: Refined Pine Tree drawing with detailed clustering for texture
-  function drawPineTree(x, y, h, baseColor, highlightColor, lightX, c=ctx) {
-    // Increased foliage width slightly for a fuller look
-    const foliageW = Math.max(4, Math.floor(h / 4));
+  // ENHANCEMENT: New function to draw the solid landmass defined by heightmaps
+  function drawLandmass(heightMap, stops, hazeFactor, c=ctx) {
+    const t = (gameClock % DAYLEN) / DAYLEN;
+    const hazeColor = getGradientColor(t, skyStops); 
+    
+    // Calculate the layer color mixed with the haze
+    const baseColor = getGradientColor({
+        time: t,
+        stops: stops,
+        hazeColor: hazeColor,
+        factor: hazeFactor
+    }, stops);
+    const baseColorStr = colorToString(baseColor);
 
-    // Draw trunk (Only the bottom part visible below foliage)
-    const trunkW = Math.max(1, Math.floor(h / 15));
-    r(x - trunkW/2, y - h*0.2, trunkW, h*0.2, baseColor, c); 
-
-    // Draw foliage using clustering
-    for (let i = 0; i < h; i += 1) { // Iterate pixel by pixel for detail
-        const currentY = y - h + i;
-        // Width decreases towards the top, creating the triangular shape
-        const progress = (i / h);
-        let w = foliageW * (1 - progress);
-
-        // Add variations to the width to simulate branches
-        if (progress > 0.2 && progress < 0.9) {
-            w += Math.sin(i * 0.5) * 2;
-        }
-        w = Math.max(1, w);
-
-        const startX = x - w/2;
-
-        // Draw the horizontal strip using randomized clustering
-        for (let j = 0; j < w; j++) {
-            // Increase randomness near the edges for a softer look
-            const edgeFactor = Math.abs(j - w/2) / (w/2);
-            if (Math.random() > edgeFactor * 0.5) {
-                p(startX + j, currentY, baseColor, c);
-            }
-        }
-
-        // Apply highlights based on light direction (X-axis)
-        if (highlightColor && w > 3) {
-            c.globalAlpha = 0.5;
-            // If light is from the right (lightX > 0)
-            if (lightX > 0.3) {
-                if (Math.random() > 0.3) p(x + w/4 + R(2), currentY, highlightColor, c);
-            } 
-            // If light is from the left (lightX < 0)
-            else if (lightX < -0.3) {
-                if (Math.random() > 0.3) p(startX + R(w/4), currentY, highlightColor, c);
-            }
-            c.globalAlpha = 1.0;
+    for (let i = 0; i < W; i++) {
+        const h = heightMap[i];
+        if (h > 0) {
+            // Draw a solid vertical line from the heightmap position down to the waterline
+            const y = WATER_Y - h;
+            r(i, y, 1, h + 1, baseColorStr, c);
         }
     }
   }
 
-  // Helper function to draw terrain layers with atmospheric perspective
-  function drawTerrainLayer(layerData, stops, hazeFactor, isDetailed, c=ctx) {
+  // Helper function to draw detailed elements (Trees or Rocks)
+  function drawTerrainDetails(layerData, stops, hazeFactor, isDetailed, c=ctx) {
     const t = (gameClock % DAYLEN) / DAYLEN;
     const hazeColor = getGradientColor(t, skyStops); 
     
@@ -1062,7 +1046,7 @@
     // Drawing Pines or Rocks
     if (layerData && layerData.length > 0) {
         layerData.forEach(item => {
-            // CORRECTION: Calculate Y position based on the unified WATER_Y and the item's offset
+            // Calculate Y position based on the unified WATER_Y and the item's offset
             const y = WATER_Y - item.baseYOffset;
 
             if (item.hasOwnProperty('h')) {
@@ -1088,7 +1072,59 @@
     }
   }
 
-  // ENHANCEMENT: Comprehensive background rendering with detailed terrain and reflections
+
+  // ENHANCEMENT: Refined Pine Tree drawing with detailed clustering for texture
+  function drawPineTree(x, y, h, baseColor, highlightColor, lightX, c=ctx) {
+    const foliageW = Math.max(4, Math.floor(h / 4));
+
+    // Draw trunk (Only the bottom part visible below foliage)
+    const trunkW = Math.max(1, Math.floor(h / 15));
+    // Use a slightly darker shade for the trunk if possible, but base color is fine for this style
+    r(x - trunkW/2, y - h*0.2, trunkW, h*0.2 + 1, baseColor, c); 
+
+    // Draw foliage using clustering
+    for (let i = 0; i < h; i += 1) { // Iterate pixel by pixel for detail
+        const currentY = y - h + i;
+        // Width decreases towards the top, creating the triangular shape
+        const progress = (i / h);
+        let w = foliageW * (1 - progress);
+
+        // Add variations to the width to simulate branches
+        if (progress > 0.2 && progress < 0.9) {
+            w += Math.sin(i * 0.5) * 2;
+        }
+        w = Math.max(1, w);
+
+        const startX = x - w/2;
+
+        // Draw the horizontal strip using randomized clustering
+        for (let j = 0; j < w; j++) {
+            // Increase randomness near the edges for a softer look
+            const edgeFactor = Math.abs(j - w/2) / (w/2);
+            // Added slight density reduction overall for texture
+            if (Math.random() > 0.1 && Math.random() > edgeFactor * 0.5) {
+                p(startX + j, currentY, baseColor, c);
+            }
+        }
+
+        // Apply highlights based on light direction (X-axis)
+        if (highlightColor && w > 3) {
+            c.globalAlpha = 0.5;
+            // If light is from the right (lightX > 0)
+            if (lightX > 0.3) {
+                if (Math.random() > 0.3) p(x + w/4 + R(2), currentY, highlightColor, c);
+            } 
+            // If light is from the left (lightX < 0)
+            else if (lightX < -0.3) {
+                if (Math.random() > 0.3) p(startX + R(w/4), currentY, highlightColor, c);
+            }
+            c.globalAlpha = 1.0;
+        }
+    }
+  }
+
+
+  // ENHANCEMENT: Comprehensive background rendering with landmasses and details
   function drawBackground() {
     const gameTime = (gameClock % DAYLEN) / DAYLEN;
     const waterHeight = H - WATER_Y;
@@ -1112,7 +1148,7 @@
     ]);
     g.addColorStop(1, colorToString(horizonHaze));
     bgCtx.fillStyle = g;
-    // Fill the buffer (only need to fill the sky part, terrain covers the rest)
+    // Fill the buffer (only need to fill the sky part)
     bgCtx.fillRect(0, 0, W, skyHeight);
     
     // Sun/Moon/Stars (Drawn on bgBuffer)
@@ -1155,20 +1191,23 @@
     bgCtx.globalAlpha = 1;
     drawStars(sunElev, bgCtx);
     
-    // Clouds (Drawn before terrain so they can go behind distant elements)
+    // Clouds (Drawn before terrain)
     drawClouds(bgCtx);
 
     // Terrain Layers (Drawn on bgBuffer, back to front)
-    // Haze factors adjusted for better depth perception
-
-    // Layer 1: Distant Pines (More haze)
-    drawTerrainLayer(terrain.distantPines, distantPineStops, 0.5, false, bgCtx);
+    // FIX: Draw Landmass first, then Details on top.
     
-    // Layer 2: Near Pines (Less haze, detailed lighting)
-    drawTerrainLayer(terrain.nearPines, nearPineBaseStops, 0.15, true, bgCtx);
+    // Layer 1: Distant (Reduced haze slightly for visibility: 0.4)
+    drawLandmass(terrain.distantMap, distantPineStops, 0.4, bgCtx);
+    drawTerrainDetails(terrain.distantPines, distantPineStops, 0.4, false, bgCtx);
+    
+    // Layer 2: Near (Reduced haze slightly: 0.1)
+    drawLandmass(terrain.nearMap, nearPineBaseStops, 0.1, bgCtx);
+    drawTerrainDetails(terrain.nearPines, nearPineBaseStops, 0.1, true, bgCtx);
 
-    // Layer 3: Rocks (Closest, minimal haze)
-    drawTerrainLayer(terrain.rocks, rockStops, 0.05, false, bgCtx);
+    // Layer 3: Rocks (Minimal haze: 0.05)
+    // Rocks don't need a separate landmass draw as they are drawn densely in drawTerrainDetails
+    drawTerrainDetails(terrain.rocks, rockStops, 0.05, false, bgCtx);
 
 
     // --- 2. Draw the main canvas background (Water Body) ---
@@ -1183,12 +1222,10 @@
     ctx.clip();
 
     // Dynamic Ripple Distortion
-    // The reflection source Y is the waterline (WATER_Y)
     const reflectionHeight = Math.min(waterHeight, WATER_Y);
 
     for (let y = 0; y < reflectionHeight; y++) {
         // Calculate distortion
-        // ENHANCEMENT: Tuned ripple parameters for more realistic movement
         const rippleAmplitude = clamp(y / 20.0, 0.5, 4.0); 
         const rippleFrequency = 0.08;
         const rippleSpeed = 0.06;
@@ -1537,7 +1574,7 @@
         }
       }
 
-      // Update weather
+      // Update weather (Unchanged)
       weather.windChangeTimer -= dt;
       if (weather.windChangeTimer <= 0) {
         weather.windTarget = (R(1) - 0.5) * 2.0;
@@ -1891,7 +1928,7 @@
         if (windGainNode) setAudioParam(windGainNode.gain, 0, audioContext.currentTime, 'set');
     }
     highScore = parseInt(localStorage.getItem('WaterfowlingReduxHighScore')) || 0;
-    // Regenerate the new detailed terrain
+    // Regenerate the terrain
     generateTerrain(); 
     generateReeds(); 
     startNextLevel();
